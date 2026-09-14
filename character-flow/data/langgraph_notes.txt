@@ -1,0 +1,35 @@
+LangGraph Overview
+===================
+
+* **What it is** – A lightweight, low‑level orchestration framework built on top of LangChain. It is designed for creating *stateful*, *durable* AI agent workflows that can include cycles, branching, and human‑in‑the‑loop interactions.
+
+* **Key features**
+  - **Graph‑based execution** – Represent the agent’s steps as a directed graph, allowing arbitrary branching and loops.
+  - **Durable execution** – Persist node state so a long‑running or interrupted workflow can resume from the last checkpoint.
+  - **Streaming & token access** – When using a streaming‑capable LLM (e.g., OpenAI’s gpt‑3.5‑turbo‑1106), LangGraph can expose token streams and intermediate outputs in real time.
+  - **Human‑in‑the‑loop** – Inject human responses as a node in the graph, making it suitable for semi‑automated processes.
+  - **Memory & context management** – Built‑in mechanisms to keep conversation history or other state, which can be queried or updated by subsequent nodes.
+  - **Tool calling** – Works seamlessly with LangChain’s tool‑calling capabilities; the graph can decide when to invoke a function or external API.
+
+* **Typical use cases**
+  - Multi‑step conversational agents that need to loop until a goal is met.
+  - Complex task automation where the agent must decide on‑the‑fly which tool to use.
+  - Building production‑ready AI systems that require persistence, observability (via LangSmith), and easy debugging.
+
+* **Integration with LangChain**
+  - LangGraph is *interoperable* with the LangChain ecosystem: you can use LangChain agents, prompts, and memory modules inside a LangGraph node.
+  - The high‑level `ChatAgentExecutor` and other executor utilities are wrappers that combine LangChain agents with LangGraph’s graph structure.
+
+* **Getting started**
+  1. Install via `pip install langgraph` (plus LangChain dependencies).
+  2. Define nodes (functions or LLM calls) and edges to build the graph.
+  3. Optionally enable persistence (e.g., SQLite) and LangSmith for observability.
+  4. Run the graph; it will manage state and execute nodes in the defined order.
+
+* **Resources**
+  - Official docs: https://docs.langchain.com/oss/python/langgraph/overview
+  - Blog post: https://www.langchain.com/blog/langgraph
+  - GitHub repo: https://github.com/langchain-ai/langgraph
+  - Intro course: https://academy.langchain.com/courses/intro-to-langgraph
+
+This file contains a concise summary of LangGraph’s purpose, features, and how it complements LangChain for building reliable AI agents.

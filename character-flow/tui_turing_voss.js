@@ -1,82 +1,56 @@
 #!/usr/bin/env node
 /**
  * TUI for Turing Voss — Logic Puzzle Master & Algorithm Designer
- * AGENTIC: can execute code, solve math, run algorithms, read/write files.
+ * Powered by LangGraph with real tool execution.
  */
 import readline from 'readline';
 import chalk from 'chalk';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import * as fileOps from './skills/shared/file_ops.js';
-import * as shell from './skills/shared/shell.js';
-import * as cryptoStock from './skills/shared/crypto_stock.js';
+import { LangGraphAgent } from './langgraph-agent.js';
 import * as turingSkills from './brain/turing_voss.js';
 import * as turingAgent from './skills/agents/turing.js';
 import * as bridge from './skills/bridge.js';
 
-const PROXY = process.env.PROXY_HOST || 'http://localhost:3001';
 const ROOT = dirname(fileURLToPath(import.meta.url));
-const ALL_TOOLS = [
-  ...bridge.TOOL_DEFINITIONS,
-  ...turingAgent.TOOL_DEFINITIONS,
-  ...fileOps.TOOL_DEFINITIONS,
-  ...shell.TOOL_DEFINITIONS,
-  ...cryptoStock.TOOL_DEFINITIONS,
-];
+const ALL_TOOLS = [...bridge.TOOL_DEFINITIONS, ...turingAgent.TOOL_DEFINITIONS];
 
-async function fetchChat(msgs) {
-  const r = await fetch(`${PROXY}/v1/chat/completions`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: 'auto', messages: msgs, tools: ALL_TOOLS, stream: false }),
-  });
-  if (!r.ok) throw new Error(`Proxy ${r.status}`);
-  return await r.json();
-}
-
-async function execTool(name, args) {
-  try {
-    // Delegate shared real tools to bridge
-    const sharedTools = new Set(['get_crypto_price','get_stock_quote','get_top_coins','calculate','solve_math','convert_units','docx_to_pdf','pdf_to_text','xlsx_to_pdf','merge_pdfs','search_web','scrape_url','download_file','translate','run_python','run_node','run_shell','read_file','write_file','list_dir','find_files','grep_content']);
-    if (sharedTools.has(name)) return await bridge.execute(name, args);
-    if (name === 'judge_solution' || name === 'benchmark_algorithm' || name === 'solve_math' ||
-        name === 'generate_problem' || name === 'analyze_complexity') {
-      return await turingAgent.execute(name, args);
-    }
-    if (name === 'read_file' || name === 'write_file' || name === 'edit_file' ||
-        name === 'list_dir' || name === 'search_files' || name === 'search_content' || name === 'get_file_info') {
-      return fileOps.execute(name, args);
-    }
-    if (name === 'run_command' || name === 'run_python' || name === 'run_node') {
-      return shell.execute(name, args);
-    }
-    if (name.startsWith('get_')) {
-      return cryptoStock.execute(name, args);
-    }
-    return JSON.stringify({ error: `Unknown tool: ${name}` });
-  } catch (e) { return JSON.stringify({ error: e.message }); }
-}
-
-const C = { user: chalk.cyan, ai: chalk.hex('#7B68EE'), dim: chalk.gray, accent: chalk.hex('#9370DB'), error: chalk.red, tool: chalk.hex('#FFD700'), green: chalk.green };
+const C = {
+  user: chalk.cyan, ai: chalk.hex('#7B68EE'), dim: chalk.gray,
+  accent: chalk.hex('#9370DB'), error: chalk.red, tool: chalk.hex('#FFD700'), green: chalk.green,
+};
 
 async function main() {
   console.log(C.accent('╔══════════════════════════════════════════╗'));
-  console.log(C.accent('║     🔮  Turing Voss — AGENTIC AI         ║'));
+  console.log(C.accent('║     🔮  Turing Voss — LangGraph Agent    ║'));
   console.log(C.accent('║   Logic · Algorithms · Code Judge        ║'));
   console.log(C.accent('╚══════════════════════════════════════════╝\n'));
-  console.log(C.dim(`  Skills loaded: ${ALL_TOOLS.length} tools active`));
-  console.log(C.dim('  Type /tools to see all capabilities\n\n'));
+  console.log(C.dim(`  LangGraph v1.4 | ${ALL_TOOLS.length} tools | Memory: ON`));
+  console.log(C.dim('  Type /tools to see all capabilities\n'));
+
+  const agent = new LangGraphAgent({
+    systemPrompt: turingSkills.SYSTEM_PROMPT,
+    tools: ALL_TOOLS,
+    characterName: 'Turing Voss',
+    toolExecutor: async (name, args) => {
+      // Try agent-specific first, then bridge
+      try {
+        const r = await turingAgent.execute(name, args);
+        return typeof r === 'string' ? r : JSON.stringify(r);
+      } catch (_) {
+        return await bridge.execute(name, args);
+      }
+    },
+    threadId: 'turing-lg',
+  });
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   const ask = (q) => new Promise(r => rl.question(q, r));
 
-  const brain = await import(join(ROOT, 'brain', 'turing_voss.js'));
-  let msgs = [{ role: 'system', content: brain.SYSTEM_PROMPT }];
-  msgs.push({ role: 'user', content: 'Hello Turing. Introduce yourself and tell me what you can do.' });
-
   while (true) {
     console.log(C.dim('\n─'.repeat(45)));
     const ans = await ask(C.user('Turing> '));
-    const input = ans.trim().toLowerCase();
+    const input = ans.trim();
 
     if (!input || input === 'exit' || input === 'quit') break;
     else if (input === '/tools' || input === '/skills') {
@@ -89,41 +63,51 @@ async function main() {
     }
     else if (input === '/puzzles') {
       console.log(C.green('\n🧩 Challenge the AI:\n'));
-      for (const p of brain.PUZZLES) {
+      for (const p of turingSkills.PUZZLES) {
         console.log(C.dim(`  ${p.title} [${p.difficulty}]`));
         console.log(C.dim(`     ${p.puzzle.slice(0, 80)}...\n`));
       }
     }
     else if (input === '/stats') {
-      const s = brain.getStats();
-      console.log(C.accent(`\n📊 ${s.k} knowledge entries, ${s.p} puzzles, ${s.a} axioms\n`));
+      const s = turingSkills.getStats();
+      console.log(C.accent(`\n📊 ${s.k} knowledge, ${s.p} puzzles, ${s.a} axioms\n`));
     }
     else if (input === '/clear') {
-      msgs = [{ role: 'system', content: brain.SYSTEM_PROMPT }];
+      agent.clear();
       console.log(C.dim('  Conversation cleared.'));
     }
-    else {
-      msgs.push({ role: 'user', content: ans });
-      let iter = 0;
-      while (iter++ < 5) {
-        try {
-          const result = await fetchChat(msgs);
-          const msg = result.choices?.[0]?.message;
-          if (msg?.tool_calls) {
-            for (const tc of msg.tool_calls) {
-              console.log(C.tool(`  ⚡ ${tc.function.name}(...)`));
-              const out = await execTool(tc.function.name, JSON.parse(tc.function.arguments || '{}'));
-              console.log(C.dim('  → ' + String(out).slice(0, 300)));
-              msgs.push({ role: 'tool', tool_call_id: tc.id, content: out });
+    else if (input.startsWith('/stream')) {
+      // Stream mode: show real-time chunks
+      console.log(C.dim('\n📡 Streaming...\n'));
+      let finalText = '';
+      for await (const chunk of agent.stream(input.slice(7).trim() || input)) {
+        const nodes = Object.keys(chunk);
+        for (const node of nodes) {
+          const data = chunk[node];
+          if (node === 'llm' && data?.messages) {
+            for (const m of data.messages) {
+              if (m.content) {
+                process.stdout.write(C.ai(m.content));
+                finalText += m.content;
+              }
+              if (m.tool_calls) {
+                console.log(C.tool('  ⚡ ' + m.tool_calls.map(t => t.name).join(', ')));
+              }
             }
-            continue;
           }
-          const reply = msg?.content || '[no response]';
-          console.log(C.ai(reply));
-          msgs.push({ role: 'assistant', content: reply });
-          break;
-        } catch (e) { console.log(C.error(`  Error: ${e.message}`)); break; }
+          if (node === 'tools' && data?.messages) {
+            for (const m of data.messages) {
+              console.log(C.dim('  ✓ ' + String(m.content)?.slice(0, 150)));
+            }
+          }
+        }
       }
+      console.log(C.dim('\n  Turns: ' + (finalText ? 1 : 0)));
+    }
+    else {
+      // Normal run mode
+      const r = await agent.run(input);
+      console.log(C.ai(r.response));
     }
   }
   rl.close();
