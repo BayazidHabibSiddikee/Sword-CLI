@@ -96,7 +96,7 @@ async function main() {
           }
           if (node === 'tools' && data?.messages) {
             for (const m of data.messages) {
-              console.log(C.dim('  ✓ ' + String(m.content)?.slice(0, 150)));
+              const tc = String(m.content)?.slice(0, 150); if (!/^─+$/.test(tc)) console.log(C.dim('  ✓ ' + tc));
             }
           }
         }
