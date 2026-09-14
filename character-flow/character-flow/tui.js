@@ -1,12 +1,16 @@
 #!/usr/bin/env node
 /**
- * tui.js — Unified Character Flow TUI (Opencode-style)
- * Single interface for ALL characters with selection grid, /model, /team, etc.
+ * tui.js — Unified Character Flow TUI (Opencode-style replacement)
+ * Features: persistent sessions, auto-discovered skills, git ops, file editing, task tracking
  */
 import readline from 'readline';
 import chalk from 'chalk';
 import { LangGraphAgent } from './langgraph-agent.js';
 import * as bridge from './skills/bridge.js';
+import * as gitSkill from './skills/git.js';
+import * as fileEditSkill from './skills/file_edit.js';
+import * as tasksSkill from './skills/tasks.js';
+import { sessions } from './skills/sessions.js';
 
 // ── Colors ────────────────────────────────────────────────────────────────────
 const yellow   = chalk.hex('#FFD700');
@@ -19,6 +23,31 @@ const magenta  = chalk.hex('#FF6BEB');
 const white    = chalk.white;
 function accent(hex) { return chalk.hex(hex || '#888888'); }
 function aiColor(hex) { return chalk.hex(hex || '#00CED1'); }
+const TOOL_COLORS = {
+  git: chalk.hex('#E06C75'),
+  file: chalk.hex('#98C379'),
+  bridge: chalk.hex('#61AFEF'),
+  task: chalk.hex('#C678DD'),
+};
+
+// ── Skill Registry (auto-discover from skills/*.js) ──────────────────────────
+const SKILL_MODULES = [
+  { name: 'git', import: () => import('./skills/git.js') },
+  { name: 'file_edit', import: () => import('./skills/file_edit.js') },
+  { name: 'tasks', import: () => import('./skills/tasks.js') },
+];
+
+let skillRegistry = {};
+async function discoverSkills() {
+  for (const mod of SKILL_MODULES) {
+    try {
+      const m = await mod.import();
+      if (m.TOOL_DEFINITIONS && m.execute) {
+        skillRegistry[mod.name] = m;
+      }
+    } catch (_) {}
+  }
+}
 
 // ── Character Registry ────────────────────────────────────────────────────────
 const CHARACTERS = {
@@ -42,22 +71,48 @@ let currentModel  = 'agnes-2.5-flash';
 let teamMode      = false;
 let teamMembers   = [];
 const agents      = {};
+const commandHistory = [];
+let historyIndex  = -1;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 async function getAgent(charKey) {
   if (agents[charKey]) return agents[charKey];
   const char     = CHARACTERS[charKey];
   const brainMod = await char.brain();
+  // Collect all tool definitions from bridge + registered skills
   let allTools   = [...bridge.TOOL_DEFINITIONS];
   if (char.agentSkills) {
     try { const s = await char.agentSkills(); allTools = [...allTools, ...(s.TOOL_DEFINITIONS || [])]; } catch (_) {}
   }
+  // Merge skill tools (git, file_edit, tasks)
+  for (const [skillName, skillMod] of Object.entries(skillRegistry)) {
+    if (skillMod.TOOL_DEFINITIONS) {
+      allTools = [...allTools, ...skillMod.TOOL_DEFINITIONS];
+    }
+  }
+
+  // Build session context
+  const session = sessions.load(charKey);
+  const sessionContext = session.conversation.length > 0
+    ? `\n\n## SESSION CONTEXT (previous conversation summary):\n${session.summarize(charKey, 1500)}\n---\nContinue the conversation naturally.`
+    : '';
+
   agents[charKey] = new LangGraphAgent({
-    systemPrompt: brainMod.SYSTEM_PROMPT,
+    systemPrompt: brainMod.SYSTEM_PROMPT + sessionContext,
     tools: allTools,
     characterName: char.name,
     modelName: currentModel,
     toolExecutor: async (name, args) => {
+      // Route to appropriate executor based on tool name prefix
+      if (skillRegistry.git && name.startsWith('git_')) {
+        return await skillRegistry.git.execute(name, args);
+      }
+      if (skillRegistry.file_edit && name.startsWith('search_replace') || name.startsWith('insert_') || name.startsWith('append_file') || name.startsWith('replace_block') || name.startsWith('create_dir') || name.startsWith('delete_file') || name.startsWith('grep_search') || name.startsWith('count_lines')) {
+        return await fileEditSkill.execute(name, args);
+      }
+      if (skillRegistry.tasks && name.startsWith('add_task') || name.startsWith('list_tasks') || name.startsWith('update_task') || name.startsWith('delete_task') || name.startsWith('stats_tasks')) {
+        return await tasksSkill.execute(name, args);
+      }
       if (char.agentSkills) {
         try { const s = await char.agentSkills(); const r = await s.execute(name, args); if (typeof r === 'string') return r; } catch (_) {}
       }
@@ -72,6 +127,7 @@ function getToolCount() {
   const char = CHARACTERS[currentChar];
   let c = bridge.TOOL_DEFINITIONS.length;
   if (char.agentSkills) c += 5;
+  for (const mod of Object.values(skillRegistry)) c += (mod.TOOL_DEFINITIONS?.length || 0);
   return c;
 }
 
@@ -105,15 +161,18 @@ function printSplash() {
   }
 
   console.log(dim('   ' + '─'.repeat(58)));
-  console.log(dim('   Commands: /character /model /team /tools /stats /clear /help /exit'));
+  console.log(dim('   Commands: /character /model /team /tools /skills /tasks /stats /session /clear /help /exit'));
   console.log('');
 }
 
 function printHeader() {
   const char    = CHARACTERS[currentChar];
   const teamTag = teamMode ? red(' [TEAM]') : '';
+  const sessionInfo = sessions.load(currentChar).message_count > 0
+    ? ` | 💬 ${sessions.load(currentChar).message_count} msgs`
+    : '';
   console.log(dim('   ' + '─'.repeat(58)));
-  console.log(accent(char.color)(`   ${char.emoji} ${char.name}${teamTag}   |   🤖 ${currentModel.padEnd(18)} | 🔧 ${String(getToolCount()).padEnd(3)} tools | 💾 memory ON`));
+  console.log(accent(char.color)(`   ${char.emoji} ${char.name}${teamTag}   |   🤖 ${currentModel.padEnd(18)} | 🔧 ${String(getToolCount()).padEnd(3)} tools | 💾 memory ON${sessionInfo}`));
   console.log(dim('   ' + '─'.repeat(58)));
 }
 
@@ -124,7 +183,12 @@ async function handleCommand(input) {
   const args  = parts.slice(1).join(' ');
 
   if (cmd === '/exit' || cmd === '/quit' || cmd === '/q') return 'EXIT';
-  if (cmd === '/clear') { Object.keys(agents).forEach(k => delete agents[k]); console.log(dim('   Conversation cleared.\n')); return null; }
+  if (cmd === '/clear') {
+    Object.keys(agents).forEach(k => delete agents[k]);
+    sessions.clear(currentChar);
+    console.log(dim('   Conversation cleared.\n'));
+    return null;
+  }
 
   if (cmd === '/help' || cmd === '/h' || cmd === '/') {
     console.log(dim(`
@@ -135,27 +199,32 @@ async function handleCommand(input) {
    /team list          Show team members
    /team add <char>    Add to team
    /team remove <char> Remove from team
-   /tools              List skills for current character
+   /tools              List all available skills/tools
+   /skills             Show skill registry status
+   /tasks              Manage todos and subtasks
    /stats              Show knowledge base stats
    /history            Show conversation history
+   /session            Session info (persisted across restarts)
    /brain              Show current character info
    /clear              Clear conversation
    /exit               Quit
+   ↑↓                  Navigate command history
 `));
     return null;
   }
 
   if (cmd === '/character' || cmd === '/char' || cmd === '/c') {
     const target = (args || '').toLowerCase().replace(/['"]/g, '');
-    if (!target) {
-      printSplash();
-      return null;
-    }
+    if (!target) { printSplash(); return null; }
     if (!CHARACTERS[target]) { console.log(red(`   Unknown: "${target}". Use /character to see all.`)); return null; }
     currentChar = target;
     delete agents[currentChar];
     const char = CHARACTERS[currentChar];
-    console.log(green(`   ✓ Switched to ${char.emoji} ${char.name}\n`));
+    const session = sessions.load(currentChar);
+    const resumeMsg = session.message_count > 0
+      ? ` (resuming ${session.message_count} messages)`
+      : '';
+    console.log(green(`   ✓ Switched to ${char.emoji} ${char.name}${resumeMsg}\n`));
     return null;
   }
 
@@ -210,12 +279,28 @@ async function handleCommand(input) {
 
   if (cmd === '/tools' || cmd === '/skills') {
     const char = CHARACTERS[currentChar];
-    const brainMod = await char.brain();
     let tools = [...bridge.TOOL_DEFINITIONS];
     if (char.agentSkills) { try { const s = await char.agentSkills(); tools = [...tools, ...(s.TOOL_DEFINITIONS || [])]; } catch (_) {} }
+    for (const [skName, skMod] of Object.entries(skillRegistry)) {
+      if (skMod.TOOL_DEFINITIONS) tools = [...tools, ...skMod.TOOL_DEFINITIONS.map(t => ({...t, _skill: skName}))];
+    }
     console.log(accent(char.color)(`\n   🔧 ${char.name}'s Skills (${tools.length}):\n`));
-    tools.forEach((t, i) => { console.log(accent(char.color)(`     ${i+1}. ${t.function.name}`)); console.log(dim(`        ${t.function.description}`)); });
-    console.log(dim('\n')); return null;
+    // Group by skill source
+    const bySkill = {};
+    for (const t of tools) {
+      const sk = t._skill || 'bridge';
+      if (!bySkill[sk]) bySkill[sk] = [];
+      bySkill[sk].push(t);
+    }
+    for (const [sk, toks] of Object.entries(bySkill)) {
+      console.log(dim(`   ── ${sk.toUpperCase()} (${toks.length} tools) ──`));
+      toks.forEach((t, i) => {
+        console.log(accent(char.color)(`     ${(toks.indexOf(t)+1) + Object.keys(bySkill).slice(0,Object.keys(bySkill).indexOf(sk)).reduce((a,b)=>a+bySkill[b].length,0)}. ${t.function.name}`));
+        console.log(dim(`        ${t.function.description}`));
+      });
+      console.log('');
+    }
+    return null;
   }
 
   if (cmd === '/stats') {
@@ -230,58 +315,95 @@ async function handleCommand(input) {
   }
 
   if (cmd === '/history') {
-    const agent = await getAgent(currentChar);
-    const hist = agent.getHistory();
+    const session = sessions.load(currentChar);
     const char = CHARACTERS[currentChar];
-    console.log(accent(char.color)(`\n   📜 ${char.name}'s History (${hist.length} msgs):\n`));
-    for (const m of hist.slice(-15)) {
-      const type = m._getType?.() || m.constructor?.name || '?';
-      const content = String(m.content)?.slice(0, 100);
-      if (type === 'human') console.log(cyan('   You: ') + content);
-      else if (type === 'ai') console.log(accent(char.color)('   AI:  ') + content);
-      else if (type === 'tool') console.log(dim('   Tool: ') + content);
-      else console.log(dim('   ' + content));
+    console.log(accent(char.color)(`\n   📜 ${char.name}'s History (${session.message_count} msgs):\n`));
+    for (const m of session.conversation.slice(-20)) {
+      const prefix = m.type === 'human' ? cyan('   You: ') : accent(char.color)('   AI:  ');
+      console.log(prefix + String(m.content)?.slice(0, 120));
     }
     console.log(dim('\n')); return null;
+  }
+
+  if (cmd === '/session') {
+    const session = sessions.load(currentChar);
+    const char = CHARACTERS[currentChar];
+    console.log(accent(char.color)(`
+   💾 Session: ${char.name}
+   ─────────────────────────────────────
+   Messages:      ${session.message_count}
+   Created:       ${new Date(session.created_at).toLocaleString()}
+   Last active:   ${session.last_interaction ? new Date(session.last_interaction).toLocaleString() : 'never'}
+   Persisted:     ${require('fs').existsSync(require('path').join('./data/sessions', `${currentChar}.json`)) ? 'yes' : 'no'}
+   ─────────────────────────────────────
+`));
+    return null;
+  }
+
+  if (cmd === '/tasks') {
+    const sub = args.toLowerCase();
+    if (!sub) {
+      console.log(dim('   Task commands:\n'));
+      console.log(dim('   /tasks add <title> [--priority high] [--tag feature]'));
+      console.log(dim('   /tasks list [--status pending|in_progress|completed]'));
+      console.log(dim('   /tasks done <id>'));
+      console.log(dim('   /tasks stats'));
+      console.log(dim('\n')); return null;
+    }
+    if (sub === 'add' && parts[1]) {
+      const title = parts.slice(1).join(' ');
+      const r = await tasksSkill.execute('add_task', { title, tag: 'tui', priority: 'medium' });
+      const parsed = JSON.parse(r);
+      if (parsed.success) console.log(green(`   ✓ Task created: #${parsed.id} — ${parsed.title}`));
+      else console.log(red(`   ✗ ${parsed.error}`));
+      return null;
+    }
+    if (sub === 'list' || sub === 'ls') {
+      const statusFilter = parts.find(p => p.startsWith('--status='))?.split('=')[1];
+      const r = await tasksSkill.execute('list_tasks', { status: statusFilter || undefined });
+      const parsed = JSON.parse(r);
+      console.log(dim(`\n   📋 Tasks${statusFilter ? ` (${statusFilter})` : ''}:\n`));
+      for (const t of parsed.tasks || []) {
+        const priorityColor = t.priority === 'critical' ? red : t.priority === 'high' ? chalk.hex('#FF6B35') : t.priority === 'medium' ? yellow : dim;
+        console.log(`${priorityColor(`[${t.priority}]`)} #${t.id} ${t.title}${t.status === 'completed' ? green(' ✓') : ''}`);
+      }
+      if (!parsed.tasks?.length) console.log(dim('   (no tasks)'));
+      console.log(dim('\n')); return null;
+    }
+    if (sub === 'done' && parts[1]) {
+      const id = parseInt(parts[1]);
+      const r = await tasksSkill.execute('update_task', { id, status: 'completed' });
+      const parsed = JSON.parse(r);
+      console.log(parsed.success ? green(`   ✓ Task #${id} completed`) : red(`   ✗ ${parsed.error}`));
+      return null;
+    }
+    if (sub === 'stats') {
+      const r = await tasksSkill.execute('stats_tasks', {});
+      const parsed = JSON.parse(r);
+      console.log(accent(yellow)(`\n   📊 Task Stats:\n`));
+      console.log(dim(`   Total: ${parsed.total}  Completed: ${parsed.by_status.completed || 0}  In-progress: ${parsed.by_status.in_progress || 0}  Pending: ${parsed.by_status.pending || 0}`));
+      if (parsed.recent?.length) {
+        console.log(dim('\n   Recent:'));
+        for (const t of parsed.recent) console.log(dim(`     • ${t.title} [${t.status}]`));
+      }
+      console.log(dim('\n')); return null;
+    }
+    console.log(dim('   /tasks add <title> | /tasks list | /tasks done <id> | /tasks stats\n'));
+    return null;
   }
 
   if (cmd === '/brain' || cmd === '/info') {
     const char = CHARACTERS[currentChar];
     console.log(accent(char.color)(`
-   ╔══════════════════════════════════════════╗
-   ║  ${char.emoji} ${char.name.padEnd(26)} ║
-   ╠══════════════════════════════════════════╣
-   ║  Role: ${char.teamRole.padEnd(34)} ║
-   ║  Model: ${currentModel.padEnd(36)} ║
-   ║  Team: ${(teamMode ? 'ON ('+teamMembers.length+')' : 'OFF').padEnd(32)} ║
-   ╚══════════════════════════════════════════╝
+    ╔══════════════════════════════════════════╗
+    ║  ${char.emoji} ${char.name.padEnd(26)} ║
+    ╠══════════════════════════════════════════╣
+    ║  Role: ${char.teamRole.padEnd(34)} ║
+    ║  Model: ${currentModel.padEnd(36)} ║
+    ║  Team: ${(teamMode ? 'ON ('+teamMembers.length+')' : 'OFF').padEnd(32)} ║
+    ║  Skills: ${getToolCount().toString().padEnd(34)} ║
+    ╚══════════════════════════════════════════╝
 `));
-    return null;
-  }
-
-  if (cmd === '/stream') {
-    const userInput = args || input;
-    console.log(dim('\n   📡 Streaming...\n'));
-    const agent = await getAgent(currentChar);
-    let finalText = '';
-    for await (const chunk of agent.stream(userInput)) {
-      for (const [node, data] of Object.entries(chunk)) {
-        if (node === 'llm' && data?.messages) {
-          for (const m of data.messages) {
-            const content = String(m.content);
-            if (content && !/^─+$/.test(content)) { process.stdout.write(aiColor(CHARACTERS[currentChar].color)(content)); finalText += content; }
-            if (m.tool_calls) console.log(toolCol('   ⚡ ' + m.tool_calls.map(t => t.name).join(', ')));
-          }
-        }
-        if (node === 'tools' && data?.messages) {
-          for (const m of data.messages) {
-            const tc = String(m.content)?.slice(0, 150);
-            if (tc && !/^─+$/.test(tc)) console.log(dim('   ✓ ' + tc));
-          }
-        }
-      }
-    }
-    console.log(dim(`\n   Turns: ${finalText ? 1 : 0}\n`));
     return null;
   }
 
@@ -298,7 +420,7 @@ async function runTeam(userInput) {
     try {
       const r = await agent.run(`${userInput} — Respond as ${char.name}. Focus on your expertise.`);
       results.push({ character: member, response: r.response, turns: r.turns });
-      console.log(accent(char.color)(`   → ${r.response.slice(0, 300)}${r.response.length > 300 ? '...' : ''}`));
+      console.log(aiColor(char.color)(`   → ${r.response.slice(0, 300)}${r.response.length > 300 ? '...' : ''}`));
     } catch (e) { console.log(red(`   ✗ ${member}: ${e.message?.slice(0,100)}`)); }
   }
   const char = CHARACTERS[currentChar];
@@ -312,6 +434,9 @@ async function runTeam(userInput) {
 
 // ── Main Loop ─────────────────────────────────────────────────────────────────
 async function main() {
+  // Discover skills on startup
+  await discoverSkills();
+  console.log(dim(`   🔌 Loaded ${Object.keys(skillRegistry).length} skill modules: ${Object.keys(skillRegistry).join(', ')}`));
   printSplash();
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   const ask = (q) => new Promise(r => rl.question(q, r));
@@ -324,6 +449,10 @@ async function main() {
     const input = ans.trim();
     if (!input) continue;
 
+    // Save to command history
+    commandHistory.push(input);
+    historyIndex = commandHistory.length;
+
     if (input.startsWith('/')) {
       const result = await handleCommand(input);
       if (result === 'EXIT') break;
@@ -334,6 +463,7 @@ async function main() {
         } else {
           const agent = await getAgent(currentChar);
           const r = await agent.run(result);
+          sessions.persist(currentChar, result, r);
           const char = CHARACTERS[currentChar];
           console.log(aiColor(char.color)(r.response));
         }
@@ -347,6 +477,7 @@ async function main() {
     } else {
       const agent = await getAgent(currentChar);
       const r = await agent.run(input);
+      sessions.persist(currentChar, input, r);
       const char = CHARACTERS[currentChar];
       console.log(aiColor(char.color)(r.response));
     }

@@ -1,130 +1,213 @@
-#!/usr/bin/env node
 /**
- * server.js — Character Flow Web Server
- * Serves the web UI + proxies LLM API calls to freellmapi
- * Usage: node server.js [--port 3002]
+ * server.js — Character Flow Web API Server
+ * Serves the React web UI + provides REST endpoints for character chat, skills, sessions, tasks.
  */
 import { createServer } from 'http';
 import { readFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { LangGraphAgent } from './langgraph-agent.js';
+import * as bridge from './skills/bridge.js';
+import * as gitSkill from './skills/git.js';
+import * as fileEditSkill from './skills/file_edit.js';
+import * as tasksSkill from './skills/tasks.js';
+import { sessions } from './skills/sessions.js';
 
+const PORT = parseInt(process.env.PORT || '3002');
+const PROXY_BASE = process.env.PROXY_HOST || 'http://localhost:3001';
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const PORT = parseInt(process.argv.find(a => a.startsWith('--port='))?.split('=')[1] || process.env.PORT || '3002');
-const PROXY_HOST = process.env.PROXY_HOST || 'http://localhost:3001';
 
-// ── MIME types ────────────────────────────────────────────────────────────────
-const MIME = {
-  '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css',
-  '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml',
-  '.woff2': 'font/woff2', '.ico': 'image/x-icon',
+// ── Character Registry ────────────────────────────────────────────────────────
+const CHARACTERS = {
+  izuku:  { name: 'Izuku Midoriya', emoji: '🦸', color: '#00CED1', brainPath: './brain/izuku.js',              agentSkills: null, teamRole: 'Philosopher Hero' },
+  mahina: { name: 'Mahina Artemis', emoji: '💜', color: '#DA70D6', brainPath: './brain/mahina.js',             agentSkills: null, teamRole: 'Strategist' },
+  muhan:  { name: 'Muhan Haswaz',   emoji: '📊', color: '#FFD700', brainPath: './brain/muhan.js',              agentSkills: null, teamRole: 'Math & Trader' },
+  plastos:{ name: 'Plastos Jiade',  emoji: '📰', color: '#FF4466', brainPath: './brain/plastos.js',            agentSkills: null, teamRole: 'War Reporter' },
+  monk:   { name: 'Monk Maecenas',  emoji: '🧘', color: '#9370DB', brainPath: './brain/monk_maecenas.js',      agentSkills: null, teamRole: 'Religious Scholar' },
+  rishad: { name: 'Prince Rishad',  emoji: '🎭', color: '#FF6B35', brainPath: './brain/prince_rishad.js',      agentSkills: null, teamRole: 'Comedy Lover' },
+  turing: { name: 'Turing Voss',    emoji: '🔮', color: '#7B68EE', brainPath: './brain/turing_voss.js',        agentSkills: () => import('./skills/agents/turing.js'), teamRole: 'Logic Master' },
+  sable:  { name: 'Sable Chen',     emoji: '🔧', color: '#FF6B35', brainPath: './brain/sable_chen.js',         agentSkills: () => import('./skills/agents/sable.js'),  teamRole: 'Pragmatic Engineer' },
+  ada:    { name: 'Dr. Ada Vance',  emoji: '✨', color: '#00CED1', brainPath: './brain/ada_vance.js',          agentSkills: () => import('./skills/agents/ada.js'),    teamRole: 'Computational Mathematician' },
+  kael:   { name: 'Kael Vector',    emoji: '🤖', color: '#00FF7F', brainPath: './brain/kael_vector.js',        agentSkills: () => import('./skills/agents/kael.js'),   teamRole: 'ML Engineer' },
 };
 
-// ── Proxy handler ─────────────────────────────────────────────────────────────
-async function proxyRequest(req, res) {
-  const targetUrl = `${PROXY_HOST}${req.url}`;
-  try {
-    const fetchOpts = {
-      method: req.method,
-      headers: { ...req.headers, host: new URL(PROXY_HOST).host },
-    };
-    if (req.body) fetchOpts.body = req.body;
-    const proxyRes = await fetch(targetUrl, fetchOpts);
-    res.writeHead(proxyRes.status, proxyRes.headers);
-    proxyRes.body?.pipe(res);
-  } catch (e) {
-    res.writeHead(502);
-    res.end(JSON.stringify({ error: `Proxy error: ${e.message}` }));
+// In-memory agent cache
+const agents = {};
+const models = ['agnes-2.5-flash', 'auto'];
+
+async function getWebAgent(charKey) {
+  if (agents[charKey]) return agents[charKey];
+  const char = CHARACTERS[charKey];
+  if (!char) return null;
+  const brainMod = await import(char.brainPath);
+  let allTools = [...bridge.TOOL_DEFINITIONS, ...gitSkill.TOOL_DEFINITIONS, ...fileEditSkill.TOOL_DEFINITIONS, ...tasksSkill.TOOL_DEFINITIONS];
+  if (char.agentSkills) {
+    try { const s = await char.agentSkills(); allTools = [...allTools, ...(s.TOOL_DEFINITIONS || [])]; } catch (_) {}
   }
+
+  const executor = async (name, args) => {
+    if (name.startsWith('git_')) return await gitSkill.execute(name, args);
+    if (['search_replace','insert_after','insert_before','append_file','replace_block','create_dir','delete_file','grep_search','count_lines'].includes(name)) return await fileEditSkill.execute(name, args);
+    if (['add_task','list_tasks','update_task','delete_task','stats_tasks'].includes(name)) return await tasksSkill.execute(name, args);
+    if (char.agentSkills) { try { const s = await char.agentSkills(); const r = await s.execute(name, args); if (typeof r === 'string') return r; } catch (_) {} }
+    return await bridge.execute(name, args);
+  };
+
+  agents[charKey] = new LangGraphAgent({
+    systemPrompt: brainMod.SYSTEM_PROMPT,
+    tools: allTools,
+    characterName: char.name,
+    modelName: 'agnes-2.5-flash',
+    toolExecutor: executor,
+    threadId: `web-${charKey}`,
+  });
+  return agents[charKey];
 }
 
-// ── Static file serve ─────────────────────────────────────────────────────────
-function serveStatic(res, filePath) {
-  const ext = join(filePath, '').slice(filePath.lastIndexOf('.'));
-  const mime = MIME[ext] || 'application/octet-stream';
-  try {
-    const content = readFileSync(filePath);
-    res.writeHead(200, { 'Content-Type': mime, 'Cache-Control': 'public, max-age=3600' });
-    res.end(content);
-  } catch (_) {
-    res.writeHead(404);
-    res.end('Not found');
+// ── Skill Discovery ───────────────────────────────────────────────────────────
+async function getAllSkills() {
+  const skills = [];
+  for (const [name, mod] of Object.entries({ bridge, git: gitSkill, file_edit: fileEditSkill, tasks: tasksSkill })) {
+    if (mod.TOOL_DEFINITIONS) {
+      skills.push({ name, tools: mod.TOOL_DEFINITIONS.map(t => ({ name: t.function.name, description: t.function.description, parameters: t.function.parameters })) });
+    }
   }
+  return skills;
 }
 
-// ── Build server ──────────────────────────────────────────────────────────────
+// ── HTTP Server ───────────────────────────────────────────────────────────────
 const server = createServer(async (req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host}`);
-  const pathname = url.pathname;
+  const url = new URL(req.url, `http://localhost:${PORT}`);
+  const path = url.pathname;
+  const method = req.method;
 
-  // API proxy — forward everything under /v1 and /api to freellmapi
-  if (pathname.startsWith('/v1/') || pathname.startsWith('/api/')) {
-    return proxyRequest(req, res);
-  }
+  // ── CORS headers ──
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
-  // Character data endpoint
-  if (pathname === '/api/characters') {
-    const chars = [
-      { id: 'izuku', name: 'Izuku Midoriya', emoji: '🦸', color: '#00CED1', role: 'Philosopher Hero' },
-      { id: 'mahina', name: 'Mahina Artemis', emoji: '💜', color: '#DA70D6', role: 'Strategist' },
-      { id: 'muhan', name: 'Muhan Haswaz', emoji: '📊', color: '#FFD700', role: 'Math Professor & Trader' },
-      { id: 'plastos', name: 'Plastos Jiade', emoji: '📰', color: '#FF4466', role: 'War Reporter' },
-      { id: 'monk', name: 'Monk Maecenas', emoji: '🧘', color: '#9370DB', role: 'Religious Scholar' },
-      { id: 'rishad', name: 'Prince Rishad', emoji: '🎭', color: '#FF6B35', role: 'Comedy Lover' },
-      { id: 'turing', name: 'Turing Voss', emoji: '🔮', color: '#7B68EE', role: 'Logic & Algorithms' },
-      { id: 'sable', name: 'Sable Chen', emoji: '🔧', color: '#FF6B35', role: 'Pragmatic Engineer' },
-      { id: 'ada', name: 'Dr. Ada Vance', emoji: '✨', color: '#00CED1', role: 'Computational Math' },
-      { id: 'kael', name: 'Kael Vector', emoji: '🤖', color: '#00FF7F', role: 'ML Engineer' },
-    ];
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(chars));
+  // ── API Routes ──
+  if (path === '/api/characters' && method === 'GET') {
+    const chars = Object.entries(CHARACTERS).map(([key, c]) => ({
+      key, name: c.name, emoji: c.emoji, color: c.color, role: c.teamRole,
+      brain: c.brainPath, hasAgentSkills: !!c.agentSkills,
+    }));
+    sendJson(res, 200, { characters: chars });
     return;
   }
 
-  // Models endpoint
-  if (pathname === '/api/models') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify([{ id: 'agnes-2.5-flash', name: 'Agnes 2.5 Flash', provider: 'ByNara' }, { id: 'auto', name: 'Auto (proxy default)', provider: 'freellmapi' }]));
+  if (path === '/api/skills' && method === 'GET') {
+    const skills = await getAllSkills();
+    sendJson(res, 200, { skills });
     return;
   }
 
-  // Health check
-  if (pathname === '/api/health') {
+  if (path === '/api/models' && method === 'GET') {
+    sendJson(res, 200, { models });
+    return;
+  }
+
+  if (path === '/api/sessions' && method === 'GET') {
+    sendJson(res, 200, { sessions: sessions.list() });
+    return;
+  }
+
+  if (path === '/api/chat' && method === 'POST') {
+    const body = await readBody(req);
+    const { character, message, model } = body || {};
+    if (!character || !message) {
+      sendJson(res, 400, { error: 'Missing character or message' });
+      return;
+    }
+    const agent = await getWebAgent(character);
+    if (!agent) { sendJson(res, 404, { error: `Character "${character}" not found` }); return; }
     try {
-      const r = await fetch(`${PROXY_HOST}/v1/models`);
-      const data = await r.json();
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'ok', proxy: PROXY_HOST, models: data.data?.length || 0 }));
+      const result = await agent.run(message);
+      sessions.persist(character, message, result);
+      sendJson(res, 200, { character, response: result.response, turns: result.turns, hasToolCalls: result.hasToolCalls });
     } catch (e) {
-      res.writeHead(503, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'error', message: e.message }));
+      sendJson(res, 500, { error: e.message });
     }
     return;
   }
 
-  // SPA fallback — serve index.html for all other routes
-  const indexPath = join(__dirname, 'web', 'dist', 'index.html');
-  if (existsSync(indexPath)) {
-    serveStatic(res, indexPath);
+  if (path === '/api/tasks' && method === 'GET') {
+    const statusFilter = url.searchParams.get('status');
+    const r = await tasksSkill.execute('list_tasks', statusFilter ? { status: statusFilter } : {});
+    sendJson(res, 200, JSON.parse(r));
     return;
   }
 
-  // Dev mode — serve from source
-  const devPath = join(__dirname, 'web', 'src', 'index.html');
-  if (existsSync(devPath)) {
-    serveStatic(res, devPath);
+  if (path === '/api/tasks' && method === 'POST') {
+    const body = await readBody(req);
+    const r = await tasksSkill.execute('add_task', body || {});
+    sendJson(res, 200, JSON.parse(r));
     return;
   }
 
-  res.writeHead(404);
-  res.end('Character Flow — select a character to begin');
+  if (path === '/api/stats' && method === 'GET') {
+    const charKey = url.searchParams.get('character');
+    if (charKey && CHARACTERS[charKey]) {
+      const brainMod = await import(CHARACTERS[charKey].brainPath);
+      if (brainMod.getStats) sendJson(res, 200, brainMod.getStats());
+      else sendJson(res, 200, { note: 'No stats available' });
+    } else {
+      // Aggregate stats
+      const allSessions = sessions.list();
+      const totalMsgs = Object.values(allSessions).reduce((a, s) => a + (s.message_count || 0), 0);
+      sendJson(res, 200, { total_sessions: Object.keys(allSessions).length, total_messages: totalMsgs, characters: Object.keys(CHARACTERS).length });
+    }
+    return;
+  }
+
+  if (path === '/api/session/clear' && method === 'POST') {
+    const body = await readBody(req);
+    const charKey = body?.character;
+    if (charKey) { sessions.clear(charKey); delete agents[charKey]; }
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  // ── Serve static files ──
+  const staticPath = join(__dirname, 'web', 'dist');
+  let filePath = join(staticPath, path === '/' ? 'index.html' : path);
+  if (!existsSync(filePath)) {
+    // SPA fallback: serve index.html for any non-file route
+    filePath = join(staticPath, 'index.html');
+  }
+  if (!existsSync(filePath)) {
+    sendJson(res, 404, { error: 'Not found' });
+    return;
+  }
+  const ext = filePath.split('.').pop();
+  const types = { html: 'text/html', js: 'application/javascript', css: 'text/css', json: 'application/json', svg: 'image/svg+xml', png: 'image/png' };
+  res.writeHead(200, { 'Content-Type': types[ext] || 'application/octet-stream' });
+  readFileSync(filePath).pipe ? readFileSync(filePath).pipe(res) : res.end(readFileSync(filePath));
 });
 
+function sendJson(res, status, data) {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(data));
+}
+
+async function readBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => { try { resolve(body ? JSON.parse(body) : {}); } catch { resolve({}); } });
+    req.on('error', reject);
+  });
+}
+
 server.listen(PORT, () => {
-  console.log(`\n  ╔══════════════════════════════════════════╗`);
-  console.log(`  ║     🌀  CHARACTER FLOW — WEB UI         ║`);
-  console.log(`  ╚══════════════════════════════════════════╝`);
-  console.log(`\n  👉 http://localhost:${PORT}`);
-  console.log(`  🔌 Proxy: ${PROXY_HOST}`);
-  console.log(`\n`);
+  console.log(`   🌐 Character Flow API: http://localhost:${PORT}`);
+  console.log(`   💬 Chat API:       POST /api/chat {character, message}`);
+  console.log(`   🤖 Characters:     GET  /api/characters`);
+  console.log(`   🔧 Skills:         GET  /api/skills`);
+  console.log(`   💾 Tasks:          GET  /api/tasks | POST /api/tasks`);
+  console.log(`   📊 Stats:          GET  /api/stats`);
+  console.log(`   💬 Sessions:       GET  /api/sessions`);
+  console.log('');
+  console.log('   Web UI:          Open browser to http://localhost:3002');
 });
