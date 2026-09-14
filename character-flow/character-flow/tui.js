@@ -94,7 +94,7 @@ async function getAgent(charKey) {
   // Build session context
   const session = sessions.load(charKey);
   const sessionContext = session.conversation.length > 0
-    ? `\n\n## SESSION CONTEXT (previous conversation summary):\n${session.summarize(charKey, 1500)}\n---\nContinue the conversation naturally.`
+    ? `\n\n## SESSION CONTEXT (previous conversation summary):\n${sessions.summarize(charKey, 1500)}\n---\nContinue the conversation naturally.`
     : '';
 
   agents[charKey] = new LangGraphAgent({
