@@ -171,4 +171,5 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   else console.log('Usage: node brain/turing_voss.js <puzzle|puzzles|stats|axioms> [args]');
 }
 
-export { SYSTEM_PROMPT, searchKnowledge, getStats, listPuzzles, getPuzzle, addPuzzle, addAxiom, getAxioms, PUZZLES };
+export { SYSTEM_PROMPT, AGENT_SKILLS, searchKnowledge, getStats, listPuzzles, getPuzzle, addPuzzle, addAxiom, getAxioms, PUZZLES };
+import { TOOL_DEFINITIONS as AGENT_SKILLS } from '../skills/agents/turing.js';

@@ -164,4 +164,5 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   else console.log('Usage: node brain/ada_vance.js <theorem|theorems|quote|stats> [args]');
 }
 
-export { SYSTEM_PROMPT, searchKnowledge, getStats, listTheorems, getTheorem, generateQuote, THEOREMS };
+export { SYSTEM_PROMPT, AGENT_SKILLS, searchKnowledge, getStats, listTheorems, getTheorem, generateQuote, THEOREMS };
+import { TOOL_DEFINITIONS as AGENT_SKILLS } from '../skills/agents/ada.js';

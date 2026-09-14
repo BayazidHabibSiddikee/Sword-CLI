@@ -141,4 +141,5 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   else console.log('Usage: node brain/sable_chen.js <postmortem|postmortems|axioms|stats> [args]');
 }
 
-export { SYSTEM_PROMPT, searchKnowledge, getStats, listPostmortems, getPostmortem, ENGINEERING_AXIOMS };
+export { SYSTEM_PROMPT, AGENT_SKILLS, searchKnowledge, getStats, listPostmortems, getPostmortem, ENGINEERING_AXIOMS };
+import { TOOL_DEFINITIONS as AGENT_SKILLS } from '../skills/agents/sable.js';

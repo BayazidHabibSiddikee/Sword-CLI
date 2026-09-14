@@ -169,4 +169,5 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   else console.log('Usage: node brain/kael_vector.js <model|models|quote|stats> [args]');
 }
 
-export { SYSTEM_PROMPT, searchKnowledge, getStats, listModels, getModel, generateQuote, MODEL_CARDS };
+export { SYSTEM_PROMPT, AGENT_SKILLS, searchKnowledge, getStats, listModels, getModel, generateQuote, MODEL_CARDS };
+import { TOOL_DEFINITIONS as AGENT_SKILLS } from '../skills/agents/kael.js';
