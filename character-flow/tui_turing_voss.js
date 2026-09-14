@@ -12,10 +12,12 @@ import * as shell from './skills/shared/shell.js';
 import * as cryptoStock from './skills/shared/crypto_stock.js';
 import * as turingSkills from './brain/turing_voss.js';
 import * as turingAgent from './skills/agents/turing.js';
+import * as bridge from './skills/bridge.js';
 
 const PROXY = process.env.PROXY_HOST || 'http://localhost:3001';
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const ALL_TOOLS = [
+  ...bridge.TOOL_DEFINITIONS,
   ...turingAgent.TOOL_DEFINITIONS,
   ...fileOps.TOOL_DEFINITIONS,
   ...shell.TOOL_DEFINITIONS,
@@ -33,6 +35,9 @@ async function fetchChat(msgs) {
 
 async function execTool(name, args) {
   try {
+    // Delegate shared real tools to bridge
+    const sharedTools = new Set(['get_crypto_price','get_stock_quote','get_top_coins','calculate','solve_math','convert_units','docx_to_pdf','pdf_to_text','xlsx_to_pdf','merge_pdfs','search_web','scrape_url','download_file','translate','run_python','run_node','run_shell','read_file','write_file','list_dir','find_files','grep_content']);
+    if (sharedTools.has(name)) return await bridge.execute(name, args);
     if (name === 'judge_solution' || name === 'benchmark_algorithm' || name === 'solve_math' ||
         name === 'generate_problem' || name === 'analyze_complexity') {
       return await turingAgent.execute(name, args);

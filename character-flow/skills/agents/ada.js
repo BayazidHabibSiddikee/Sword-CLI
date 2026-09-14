@@ -4,6 +4,7 @@
  * Symbolic computation, LaTeX compilation, proof verification.
  */
 import { execSync } from 'child_process';
+import * as bridge from '../bridge.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -110,6 +111,8 @@ async function runSymPy(expression, operation, variable, atPoint, solveFor) {
 }
 
 export async function execute(toolName, args) {
+  const sharedTools = new Set(['get_crypto_price','get_stock_quote','get_top_coins','calculate','solve_math','convert_units','docx_to_pdf','pdf_to_text','xlsx_to_pdf','merge_pdfs','search_web','scrape_url','download_file','translate','run_python','run_node','run_shell','read_file','write_file','list_dir','find_files','grep_content']);
+  if (sharedTools.has(toolName)) return await bridge.execute(toolName, args);
   if (toolName === 'compute_symbolic') {
     const atPoint = args.at_point !== undefined ? [args.at_point] : undefined;
     return await runSymPy(args.expression, args.operation, args.variable, atPoint, args.solve_for);
