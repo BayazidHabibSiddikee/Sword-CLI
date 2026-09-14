@@ -10,18 +10,25 @@
     "plastos": "node tui_plastos.js",
     "monk": "node tui_monk_maecenas.js",
     "rishad": "node tui_prince_rishad.js",
+    "turing": "node tui_turing_voss.js",
+    "sable": "node tui_sable_chen.js",
+    "ada": "node tui_ada_vance.js",
+    "kael": "node tui_kael_vector.js",
     "seed": "node brain/seed_izuku.js",
     "seed:mahina": "node brain/seed_mahina.js",
     "seed:muhan": "node brain/seed_muhan.js",
     "seed:plastos": "node brain/seed_plastos.js",
     "seed:monk": "node brain/seed_monk.js",
     "seed:prince": "node brain/seed_prince.js",
-    "seed:all": "node brain/seed_izuku.js && node brain/seed_mahina.js && node brain/seed_muhan.js && node brain/seed_plastos.js && node brain/seed_monk.js && node brain/seed_prince.js"
+    "seed:turing": "node brain/seed_turing.js",
+    "seed:sable": "node brain/seed_sable.js",
+    "seed:ada": "node brain/seed_ada.js",
+    "seed:kael": "node brain/seed_kael.js",
+    "seed:all": "node brain/seed_izuku.js && node brain/seed_mahina.js && node brain/seed_muhan.js && node brain/seed_plastos.js && node brain/seed_monk.js && node brain/seed_prince.js && node brain/seed_turing.js && node brain/seed_sable.js && node brain/seed_ada.js && node brain/seed_kael.js"
   },
   "dependencies": {
     "better-sqlite3": "^12.11.1",
-    "chalk": "^5.6.2",
-    "inquirer": "^14.2.2",
+    "chalk": "^5.3.0",
     "mammoth": "^1.12.3",
     "ora": "^8.0.1",
     "pdf-parse": "^2.4.5"
