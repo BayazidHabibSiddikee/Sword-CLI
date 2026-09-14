@@ -24,7 +24,9 @@
     "seed:sable": "node brain/seed_sable.js",
     "seed:ada": "node brain/seed_ada.js",
     "seed:kael": "node brain/seed_kael.js",
-    "seed:all": "node brain/seed_izuku.js && node brain/seed_mahina.js && node brain/seed_muhan.js && node brain/seed_plastos.js && node brain/seed_monk.js && node brain/seed_prince.js && node brain/seed_turing.js && node brain/seed_sable.js && node brain/seed_ada.js && node brain/seed_kael.js"
+    "seed:all": "node brain/seed_izuku.js && node brain/seed_mahina.js && node brain/seed_muhan.js && node brain/seed_plastos.js && node brain/seed_monk.js && node brain/seed_prince.js && node brain/seed_turing.js && node brain/seed_sable.js && node brain/seed_ada.js && node brain/seed_kael.js",
+    "flow": "node tui.js",
+    "unified": "node tui.js"
   },
   "dependencies": {
     "@langchain/core": "^1.2.11",
