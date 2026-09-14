@@ -219,7 +219,7 @@ export async function execute(toolName, args) {
     if (toolName === 'read_file') {
       const p = resolvePath(args.path);
       if (!existsSync(p)) return JSON.stringify({ error: `File not found: ${p}` });
-      const sz = require('fs').statSync(p).size;
+      const sz = statSync(p).size;
       const content = readFileSync(p, 'utf-8');
       return JSON.stringify({ path: p, size: sz, content: content.slice(0, 10000), truncated: sz > 10000 });
     }

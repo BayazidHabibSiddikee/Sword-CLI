@@ -4,6 +4,7 @@
  */
 
 import { execSync } from 'child_process';
+import { writeFileSync } from 'fs';
 
 const ALLOWED_CMDS = new Set([
   'ls', 'cat', 'head', 'tail', 'wc', 'find', 'grep', 'sed', 'awk', 'sort', 'uniq',
@@ -92,7 +93,7 @@ export async function execute(toolName, args) {
       } else {
         // Write inline script to temp file
         const tmp = `/tmp/agent_py_${Date.now()}.py`;
-        require('fs').writeFileSync(tmp, args.script);
+        writeFileSync(tmp, args.script);
         cmd += ` ${tmp}`;
       }
       if (args.args) cmd += ' ' + args.args.map(a => `"${a}"`).join(' ');
@@ -109,7 +110,7 @@ export async function execute(toolName, args) {
         return JSON.stringify({ success: true, stdout: out.trim().slice(0, 4000) });
       } else {
         const tmp = `/tmp/agent_node_${Date.now()}.js`;
-        require('fs').writeFileSync(tmp, args.script);
+        writeFileSync(tmp, args.script);
         const out = execSync(`node ${tmp}`, { timeout: 30000, encoding: 'utf-8' });
         return JSON.stringify({ success: true, stdout: out.trim().slice(0, 4000) });
       }

@@ -4,6 +4,7 @@
  * Code judge, algo visualizer, math solver, complexity analyzer.
  */
 import { execSync } from 'child_process';
+import { writeFileSync } from 'fs';
 import * as bridge from '../bridge.js';
 
 export const TOOL_DEFINITIONS = [
@@ -92,7 +93,7 @@ const BASE = '/home/sword/Documents/Characters/character-flow';
 
 async function runPython(code, timeout = 5000) {
   const tmp = `/tmp/turing_py_${Date.now()}.py`;
-  require('fs').writeFileSync(tmp, code);
+  writeFileSync(tmp, code);
   try {
     const out = execSync(`python3 ${tmp}`, { timeout, encoding: 'utf-8' });
     return out.trim();
@@ -115,7 +116,7 @@ export async function execute(toolName, args) {
         result = await runPython(code, timeout);
       } else if (language === 'node') {
         const tmp = `/tmp/turing_node_${Date.now()}.js`;
-        require('fs').writeFileSync(tmp, code);
+        writeFileSync(tmp, code);
         result = execSync(`node ${tmp}`, { timeout, encoding: 'utf-8' }).trim();
       }
     } catch (e) {
