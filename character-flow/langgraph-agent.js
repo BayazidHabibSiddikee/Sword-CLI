@@ -31,8 +31,10 @@ async function llmNode(state, config) {
 
   const llm = new ChatOpenAI({
     modelName,
-    baseUrl: PROXY_BASE + '/v1',
-    apiKey: API_KEY,
+    configuration: {
+      baseURL: PROXY_BASE + '/v1',
+      apiKey: API_KEY,
+    },
     temperature: 0.7,
     maxTokens,
     parallelToolCalls: false,
