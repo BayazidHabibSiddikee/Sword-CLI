@@ -47,7 +47,6 @@ async function main() {
   const ask = (q) => new Promise(r => rl.question(q, r));
 
   while (true) {
-    console.log(C.dim('\n─'.repeat(45)));
     const ans = await ask(C.user('Sable> '));
     const input = ans.trim();
 
