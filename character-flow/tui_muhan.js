@@ -7,9 +7,9 @@ import { fileURLToPath } from 'url';
 const PROXY_HOST = process.env.PROXY_HOST || 'http://localhost:3001';
 const _ROOT = dirname(fileURLToPath(import.meta.url));
 let _brain = null, _tools = null;
-async function loadBrain() { if (_brain) return _brain; const m = await import(join(_ROOT, 'brain', 'mahina.js')); m.rag.load(); _brain = m; return m; }
+async function loadBrain() { if (_brain) return _brain; const m = await import(join(_ROOT, 'brain', 'muhan.js')); m.rag.load(); _brain = m; return m; }
 async function loadTools() { if (_tools) return _tools; _tools = { web: await import(join(_ROOT, 'tools', 'web.js')), books: await import(join(_ROOT, 'tools', 'books.js')), market: await import(join(_ROOT, 'tools', 'market.js')), news: await import(join(_ROOT, 'tools', 'news.js')) }; return _tools; }
-const C = { user: chalk.cyan, ai: chalk.hex('#ff6b9d'), dim: chalk.gray, accent: chalk.hex('#c084fc'), error: chalk.red, green: chalk.green };
+const C = { user: chalk.cyan, ai: chalk.hex('#ffd700'), dim: chalk.gray, accent: chalk.hex('#ffaa00'), error: chalk.red, green: chalk.green };
 async function fetchJSON(p) { const r = await fetch(`${PROXY_HOST}${p}`); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); }
 async function fetchChat(msgs) { const r = await fetch(`${PROXY_HOST}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'auto', messages: msgs, stream: false }) }); if (!r.ok) throw new Error(`Proxy ${r.status}`); return (await r.json()).choices?.[0]?.message?.content || '[no response]'; }
 
@@ -18,42 +18,44 @@ async function handleSearch(query) {
   const [ddg, wiki] = await Promise.all([t.web.ddgSearch(query, 5), t.web.wikiSearch(query, 5)]);
   let out = `${C.accent(`── Search: "${query}" ──`)}\n`;
   if (ddg.length > 0) { out += `${C.dim('## Web ##')}\n`; ddg.forEach((r, i) => { out += `  ${(i+1).toString().padStart(2)}. ${r.text?.substring(0, 150)}\n     → ${r.first_url}\n`; }); }
-  if (wiki.length > 0) { out += `${C.dim('\n## Psychology & Power Wiki ##')}\n`; wiki.forEach((r, i) => { out += `  ${(i+1).toString().padStart(2)}. ${C.accent(r.title)}\n     ${r.snippet?.substring(0, 200)}\n`; }); }
+  if (wiki.length > 0) { out += `${C.dim('\n## Reference ##')}\n`; wiki.forEach((r, i) => { out += `  ${(i+1).toString().padStart(2)}. ${C.accent(r.title)}\n     ${r.snippet?.substring(0, 200)}\n`; }); }
   const brain = await loadBrain();
   const rag = brain.searchKnowledge(query, 5);
-  if (rag.length > 0) { out += `${C.dim('\n## Mahina\'s Notes ##')}\n`; rag.forEach((r, i) => { out += `  ${(i+1).toString().padStart(2)}. ${C.accent(r.title)} [${r.category}]\n     ${r.content.substring(0, 180)}\n`; }); }
+  if (rag.length > 0) { out += `${C.dim('\n## Muhan\'s Notes ##')}\n`; rag.forEach((r, i) => { out += `  ${(i+1).toString().padStart(2)}. ${C.accent(r.title)} [${r.category}]\n     ${r.content.substring(0, 180)}\n`; }); }
   printSystem(out.trim());
 }
 async function handleWiki(topic) {
   const t = await loadTools();
   const articles = await t.web.wikiSearch(topic, 3);
-  if (articles.length === 0) { printSystem(C.dim('No results for "' + topic + '".')); return; }
+  if (articles.length === 0) { printSystem(C.dim('No results for "' + topic + '" on Wikipedia.')); return; }
   const art = articles[0];
   printSystem(`${C.accent(`── Research: ${art.title} ──`)}`);
   printSystem(C.dim(art.url + '\n' + (art.snippet || '').substring(0, 300)));
   const content = await t.web.wikiGetContent(art.title);
-  if (content?.length > 50) printSystem(C.dim('\n--- Key passages ---\n' + content.substring(0, 500)));
+  if (content?.length > 50) printSystem(C.dim('\n' + content.substring(0, 500)));
 }
 async function handleBooks(query) {
   const t = await loadTools();
-  const results = await t.books.searchBooks(query || 'psychology manipulation power', 8);
-  if (results.length === 0) { printSystem(C.dim('No books found. Try: "influence", "power", "behavioral economics".')); return; }
-  printSystem(`${C.accent(`── Books: "${query || 'psychology'}" ──`)}`);
-  results.forEach((b, i) => { printSystem(C.dim(`  ${(i+1).toString().padStart(2)}.`), C.accent(b.title), C.dim(` [${b.source}] — ${b.url}`)); });
+  const results = await t.books.searchBooks(query || 'business marketing trading', 8);
+  if (results.length === 0) { printSystem(C.dim('No books found. Try: "marketing", "trading", "psychology".')); return; }
+  printSystem(`${C.accent(`── Business & Finance Books ──`)}`);
+  results.forEach((b, i) => { printSystem(C.dim(`  ${(i+1).toString().padStart(2)}.`), C.accent(b.title), C.dim(` [${b.source}]`)); });
 }
-async function handleCrypto(coins = 'bitcoin,ethereum') {
+async function handleCrypto(coins = 'bitcoin,ethereum,solana') {
   const t = await loadTools();
   const data = await t.market.getCryptoPrice(coins);
-  printSystem(`${C.accent('── Crypto Prices ──')}`);
-  data.forEach(d => { if (d.error) { printSystem(C.error(d.error)); return; } printSystem(`${C.accent(d.name)}: $${d.price?.toLocaleString()}  24h: ${d.change_24h}%`); });
+  printSystem(`${C.accent('── Crypto Markets ──')}`);
+  data.forEach(d => { if (d.error) { printSystem(C.error(d.error)); return; } const chg = d.change_24h !== 'N/A' ? (parseFloat(d.change_24h) >= 0 ? C.green('+') + d.change_24h + '%' : C.red(d.change_24h + '%')) : ''; printSystem(`${C.accent(d.name)}: $${d.price?.toLocaleString()}  ${chg}`); });
 }
 async function handleStock(ticker = 'AAPL') {
   const t = await loadTools();
   const info = await t.market.getStockInfo(ticker);
   if (info.error) { printSystem(C.error(info.error)); return; }
+  const chgColor = (info.change_pct || '0').startsWith('-') ? C.red : C.green;
   printSystem(`${C.accent(`── ${info.ticker} ──`)}`);
-  printSystem(`  Price: $${info.price?.toLocaleString()}  Change: ${info.change_pct}%`);
+  printSystem(`  Price: $${info.price?.toLocaleString()}  ${chgColor(info.change_pct + '%')}`);
   if (info.market_cap) printSystem(C.dim(`  Market Cap: $${(info.market_cap/1e9).toFixed(1)}B  P/E: ${info.pe_ratio || 'N/A'}`));
+  printSystem(C.dim(`  52W: $${info.fifty_two_week_low?.toFixed(2)} — $${info.fifty_two_week_high?.toFixed(2)}`));
 }
 async function handleFearGreed() {
   const t = await loadTools();
@@ -67,46 +69,46 @@ async function handleEconomics() {
   const t = await loadTools();
   const ind = await t.market.getEconomicIndicators();
   printSystem(`${C.accent('── Economic Indicators ──')}`);
-  Object.entries(ind).forEach(([name, v]) => { const a = v.trend==='↑'?C.green(v.trend):v.trend==='↓'?C.red(v.trend):C.yellow(v.trend); printSystem(`  ${name.padEnd(25)} ${a} ${v.value}  ${C.dim(v.note)}`); });
+  Object.entries(ind).forEach(([name, v]) => { const a = v.trend==='↑'?chalk.green(v.trend):v.trend==='↓'?chalk.red(v.trend):chalk.yellow(v.trend); printSystem(`  ${name.padEnd(25)} ${a} ${v.value}  ${C.dim(v.note)}`); });
 }
-async function handleWarNews() {
+async function handleScreener(sector = 'Technology') {
   const t = await loadTools();
-  const items = await t.news.getWarNews(8);
-  if (items.length === 0) { printSystem(C.dim('No war news available right now.')); return; }
-  printSystem(`${C.accent('── War & Conflict News ──')}`);
-  items.forEach((item, i) => { printSystem(C.dim(`  ${(i+1).toString().padStart(2)}.`), C.accent(item.title.substring(0, 70))); if (item.description) printSystem(C.dim(`     ${item.description.substring(0, 150)}`)); });
+  const stocks = await t.market.screenerSector(sector);
+  if (stocks.length === 0) { printSystem(C.error('Could not fetch screener data.')); return; }
+  printSystem(`${C.accent(`── ${sector} Sector Leaders ──`)}`);
+  stocks.forEach((s, i) => { const c = (s.change||'0%').startsWith('-')?C.red:C.green; printSystem(`${C.dim(`  ${(i+1).toString().padStart(2)}.`)} ${C.accent(s.ticker)}  $${s.price?.toFixed(2)}  ${c(s.change||'0%')}`); });
 }
-async function handleMarketNews() {
+async function handleNews(source = 'business') {
   const t = await loadTools();
-  const items = await t.news.getMarketNews(8);
-  if (items.length === 0) { printSystem(C.dim('No market news available right now.')); return; }
-  printSystem(`${C.accent('── Market & Business News ──')}`);
-  items.forEach((item, i) => { printSystem(C.dim(`  ${(i+1).toString().padStart(2)}.`), C.accent(item.title.substring(0, 70))); if (item.description) printSystem(C.dim(`     ${item.description.substring(0, 150)}`)); });
+  const items = source === 'war' ? await t.news.getWarNews(8) : await t.news.getMarketNews(8);
+  if (items.length === 0) { printSystem(C.dim('No news available right now.')); return; }
+  printSystem(`${C.accent(`── ${source === 'war' ? 'War' : 'Market'} News ──`)}`);
+  items.forEach((item, i) => { printSystem(C.dim(`  ${(i+1).toString().padStart(2)}.`), C.accent(item.title.substring(0, 65))); if (item.description) printSystem(C.dim(`     ${item.description.substring(0, 150)}`)); });
 }
-async function handleQuote(theme) {
+async function handleInsight(domain) {
   const brain = await loadBrain();
-  try { const q = await fetchJSON(`/api/character/quote/${theme||'manipulation'}`); printSystem(`${C.accent('── Quote ──')}`); printSystem(`"${q.text}"`); printSystem(C.dim(`— ${q.author}  |  ${q.law||q.source_law||'?'}`)); }
-  catch (_) { const q = brain.generateQuote(theme||'manipulation'); printSystem(`${C.accent('── Quote ──')}`); printSystem(`"${q.text}"`); printSystem(C.dim(`— ${q.author}  |  Theme: ${q.theme}`)); }
+  printSystem(`${C.accent('── Insight ──')}`);
+  printSystem(C.accent(brain.generateInsight(domain || 'business')));
 }
-async function handleDance(topic) { const brain = await loadBrain(); printSystem(`${C.accent('── Dance Philosophy ──')}`); printSystem(brain.generateDancePiece(topic||'control')); }
-async function handleGym(topic) { const brain = await loadBrain(); const p = brain.generateGymProtocol(topic||'discipline'); printSystem(`${C.accent('── Gym Protocol ──')}`); printSystem(C.accent(p.title)); printSystem(p.framework); printSystem(C.dim(`Principle: ${p.principle}`)); }
-async function handleAnalyze(topic) {
+async function handleVerdict(topic) {
   const brain = await loadBrain();
-  const a = brain.generateManipulationAnalysis(topic||'social control');
-  printSystem(`${C.accent(`── Manipulation Analysis: ${topic||'social control'} ──`)}`);
-  for (const m of a.mechanisms) { printSystem(C.dim(`\n  [${m.id}] ${m.tactic}`)); printSystem(C.dim('  ') + m.description); printSystem(C.dim('  Counter: ') + m.counter); }
-  printSystem(C.dim(`\n  ⚠ ${a.warning}`));
+  const v = brain.getSpecialVerdict(topic);
+  printSystem(`${C.accent('── Special Verdict ──')}`);
+  printSystem(C.dim(`Thursday Class · ${v.topic}`));
+  printSystem(C.dim(v.format));
+  printSystem('');
+  printSystem(C.yellow('We deconstruct product anatomy, marketing psychology, and growth math.'));
+  printSystem(C.yellow('The verdict is always based on numbers, never opinions.'));
 }
-async function handleIdea(domain) {
+async function handleAdvice(problem) {
   const brain = await loadBrain();
-  const idea = brain.generateBusinessIdea(domain||null);
-  printSystem(`${C.accent('── Business Idea ──')}`); printSystem(C.accent(idea.title)); printSystem(idea.desc); printSystem(C.dim(`Law: ${idea.law}  |  Feasibility: ${idea.feasibility}`));
+  const a = brain.generateBusinessAdvice(problem);
+  printSystem(`${C.accent('── Business Advice ──')}`);
+  printSystem(C.dim(`Problem: ${a.problem}`));
+  printSystem(C.yellow(`Principle: ${a.principle}`));
+  printSystem(C.dim(`Action: ${a.action}`));
 }
-async function handleLaws() {
-  const principles = ['Law of Progressive Overload — growth requires systematic escalation','Law of Frame Control — whoever sets the context controls the interaction','Law of Intermittent Reinforcement — unpredictability breeds compulsion','Law of Reciprocity Trap — gifts create invisible debt','Law of Information Asymmetry — what you know that others don\'t is leverage','Law of Emotional Contagion — your state becomes the room\'s state','Law of Boundary Enforcement — delayed enforcement is no enforcement','Law of Discipline-Identity Loop — identity drives behavior','Law of Body as Capital — physical form signals status before words do','Law of Delayed Gratification — discipline wants what matters more','Law of Isolation Vectors — every manipulator cuts external reality','Law of Choreographic Control — movement directs attention','Law of Soft Control — engineered desire beats force','Law of Mirror Technique — reflect desire, they fall in love with themselves','Law of Silence as Punishment — absence speaks loudest'];
-  printSystem(`${C.accent('── Core Principles ──')}`);
-  principles.forEach((p, i) => { printSystem(`${C.dim(`  ${(i+1).toString().padStart(2)}. `)}${chalk.white(p)}`); });
-}
+async function handleSpecial() { handleVerdict(null); }
 async function handleStatus() {
   const brain = await loadBrain();
   const stats = brain.getStats();
@@ -117,7 +119,7 @@ async function handleStatus() {
   printSystem(`  Wisdom quotes     : ${stats.q}`);
   printSystem(`  Proxy             : ${connected?C.green('connected'):C.error('disconnected')}`);
   printSystem(`  RAG               : BM25 + FTS5 + TF-IDF cosine`);
-  printSystem(`  Tools             : web search, Wikipedia, crypto, stocks, fear&greed, economics, news`);
+  printSystem(`  Tools             : web search, Wikipedia, books, crypto, stocks, fear&greed, screener, news`);
 }
 
 const HISTORY = [];
@@ -125,11 +127,11 @@ async function runChat(input) {
   const brain = await loadBrain();
   let context = '';
   const hits = brain.searchKnowledge(input, 3);
-  if (hits.length > 0) context = '\n\n[Relevant context from Mahina\'s notes:]\n' + hits.map(h => `  • ${h.title}: ${h.content.substring(0,300)}`).join('\n');
+  if (hits.length > 0) context = '\n\n[Relevant analysis from Muhan\'s notes:]\n' + hits.map(h => `  • ${h.title}: ${h.content.substring(0,300)}`).join('\n');
   let sysPrompt = '';
   try { const p = await fetchJSON('/api/character/prompt'); sysPrompt = p.content; } catch (_) {}
   HISTORY.push({role:'user',content:input}); HISTORY.push({role:'system',content:context+'\n\n'+sysPrompt});
-  printUser(input); process.stdout.write(C.ai('Mahina: ') + C.dim('observing...\n\n')); process.stdout.flush();
+  printUser(input); process.stdout.write(C.ai('Muhan: ') + C.dim('crunching numbers...\n\n')); process.stdout.flush();
   try { const reply = await fetchChat(HISTORY); HISTORY.pop(); HISTORY.push({role:'assistant',content:reply}); console.log(''); printAI(reply); console.log(''); }
   catch (e) { HISTORY.pop(); console.log(''); printError('Error: ' + e.message); console.log(''); }
 }
@@ -137,41 +139,39 @@ function printUser(m) { console.log(C.user('You: ') + m); }
 function printAI(m) { m.split('\n').forEach(l => l.startsWith('  ')?console.log(C.dim(l)):console.log(C.ai(l))); }
 function printSystem(m) { if (typeof m === 'string') console.log(m); }
 function printError(m) { console.log(C.error('  ⚠  ' + m)); }
-
 function showBanner() {
   console.log('');
   console.log(C.accent('═══════════════════════════════════════════════════════════════════'));
-  console.log(C.accent('  MAHINA ARTEMIS — Manipulation · Dance · Gym · Researcher'));
+  console.log(C.accent('  MUHAN HASWAZ — Business · Crypto · Stocks · Math Professor'));
   console.log(C.accent('═══════════════════════════════════════════════════════════════════'));
   console.log('');
-  console.log(C.dim('  She sees the strings. She teaches you to cut them — or pull them.'));
+  console.log(C.dim('  Let me show you the numbers. Math doesn\'t lie.'));
   console.log(C.dim('  Type /help for commands\n'));
 }
 function showHelp() {
   console.log(C.dim(`
   ╔══════════════════════════════════════════════════════════════╗
-  ║         MAHINA ARTEMIS — COMMAND PALETTE                    ║
+  ║           MUHAN HASWAZ — COMMAND PALETTE                    ║
   ╠══════════════════════════════════════════════════════════════╣
   │ RESEARCH                                                      │
   │ /search <q>          — web + wiki + knowledge base           │
   │ /wiki <topic>        — Wikipedia deep dive                  │
-  │ /books [topic]       — find books on psychology/power       │
+  │ /books [topic]       — find business/marketing books        │
   │                                                       │
-  │ MARKET INTELLIGENCE                                           │
+  │ MARKETS                                                       │
   │ /crypto [coins]      — live crypto prices                   │
   │ /stock [ticker]      — stock data                           │
   │ /fng                 — Fear & Greed Index                   │
-  │ /economics           — key economic indicators              │
-  │ /warnews             — war & conflict news                  │
-  │ /marketnews          — business & market news               │
+  │ /econ                — economic indicators (leading/coincident/lagging)│
+  │ /screener [sector]   — sector leaders                       │
+  │ /news [war|biz]      — latest headlines                     │
   │                                                       │
-  │ CHARACTER                                                     │
-  │ /quote [theme]       — quote (manipulation/dance/gym/defense)│
-  │ /dance [topic]       — dance philosophy                     │
-  │ /gym [topic]         — training protocol                    │
-  │ /analyze [topic]     — manipulation breakdown + counters    │
-  │ /idea [domain]       — business idea from laws              │
-  │ /laws                — 15 core principles                   │
+  │ SPECIAL VERDICT (Thursday Class)                              │
+  │ /insight [domain]    — business insight (seo/crypto/stocks/ │
+  │                        psychology/math/marketing)           │
+  │ /verdict [topic]     — special verdict deep dive           │
+  │ /advice [problem]    — math-backed advice                   │
+  │ /special             — random Thursday topic                │
   │                                                       │
   │ SYSTEM                                                          │
   │ /status              — DB + proxy + tools status            │
@@ -198,13 +198,13 @@ async function main() {
       if (raw === '/help') { showHelp(); return; }
       if (raw.startsWith('/')) {
         const parts = raw.slice(1).split(/\s+/), cmd = parts[0].toLowerCase(), args = parts.slice(1).join(' ');
-        await (cmd==='search'?handleSearch(args):cmd==='wiki'?handleWiki(args):cmd==='books'?handleBooks(args):cmd==='crypto'?handleCrypto(args):cmd==='stock'?handleStock(args):cmd==='fng'?handleFearGreed():cmd==='econ'?handleEconomics():cmd==='warnews'?handleWarNews():cmd==='marketnews'?handleMarketNews():cmd==='quote'?handleQuote(args):cmd==='dance'?handleDance(args):cmd==='gym'?handleGym(args):cmd==='analyze'?handleAnalyze(args):cmd==='idea'?handleIdea(args):cmd==='laws'?handleLaws():cmd==='status'?handleStatus():(()=>{printError(`Unknown command: /${cmd}. Type /help for options.`);})());
+        await (cmd==='search'?handleSearch(args):cmd==='wiki'?handleWiki(args):cmd==='books'?handleBooks(args):cmd==='crypto'?handleCrypto(args):cmd==='stock'?handleStock(args):cmd==='fng'?handleFearGreed():cmd==='econ'?handleEconomics():cmd==='screener'?handleScreener(args):cmd==='news'?handleNews(args):cmd==='insight'?handleInsight(args):cmd==='verdict'?handleVerdict(args):cmd==='advice'?handleAdvice(args):cmd==='special'?handleSpecial():cmd==='status'?handleStatus():(()=>{printError(`Unknown command: /${cmd}. Type /help for options.`);})());
         await new Promise(r => setTimeout(r, 50)); return;
       }
       await runChat(raw); await new Promise(r => setTimeout(r, 50));
     });
   });
-  process.stdin.on('end', async () => { await pending; console.log(C.dim('\n  The strings remain. See you next time.\n')); rl.close(); });
+  process.stdin.on('end', async () => { await pending; console.log(C.dim('\n  The numbers don\'t lie. See you next time.\n')); rl.close(); });
   rl.prompt();
 }
 main().catch(e => { console.error(C.error('Fatal: ' + e.message)); process.exit(1); });
