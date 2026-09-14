@@ -6,13 +6,22 @@
   "scripts": {
     "izuku": "node tui_izuku.js",
     "mahina": "node tui_mahina.js",
+    "muhan": "node tui_muhan.js",
+    "plastos": "node tui_plastos.js",
+    "monk": "node tui_monk_maecenas.js",
+    "rishad": "node tui_prince_rishad.js",
     "seed": "node brain/seed_izuku.js",
     "seed:mahina": "node brain/seed_mahina.js",
-    "seed:all": "node brain/seed_izuku.js && node brain/seed_mahina.js"
+    "seed:muhan": "node brain/seed_muhan.js",
+    "seed:plastos": "node brain/seed_plastos.js",
+    "seed:monk": "node brain/seed_monk.js",
+    "seed:prince": "node brain/seed_prince.js",
+    "seed:all": "node brain/seed_izuku.js && node brain/seed_mahina.js && node brain/seed_muhan.js && node brain/seed_plastos.js && node brain/seed_monk.js && node brain/seed_prince.js"
   },
   "dependencies": {
     "better-sqlite3": "^12.11.1",
-    "chalk": "^5.3.0",
+    "chalk": "^5.6.2",
+    "inquirer": "^14.2.2",
     "mammoth": "^1.12.3",
     "ora": "^8.0.1",
     "pdf-parse": "^2.4.5"
