@@ -17,7 +17,15 @@ async function loadTools() { if (_tools) return _tools; _tools = { web: await im
 const C = { user: chalk.cyan, ai: chalk.green, dim: chalk.gray, accent: chalk.blueBright, error: chalk.red, green: chalk.green };
 
 async function fetchJSON(p) { const r = await fetch(`${PROXY_HOST}${p}`); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); }
-async function fetchChat(msgs) { const r = await fetch(`${PROXY_HOST}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'auto', messages: msgs, stream: false }) }); if (!r.ok) throw new Error(`Proxy ${r.status}`); return (await r.json()).choices?.[0]?.message?.content || '[no response]'; }
+async function fetchChat(msgs) { 
+  const r = await fetch('https://router.bynara.id/v1/chat/completions', { 
+    method: 'POST', 
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer sk-nry-taZfEhXKn4KTDGXyMIEfcbxZATlJfhKr5WxalOwaE3s' }, 
+    body: JSON.stringify({ model: 'laguna-s-2.1', messages: msgs, stream: false }) 
+  }); 
+  if (!r.ok) throw new Error(`NaraRouter ${r.status}`); 
+  return (await r.json()).choices?.[0]?.message?.content || '[no response]'; 
+}/v1/chat/completions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'auto', messages: msgs, stream: false }) }); if (!r.ok) throw new Error(`Proxy ${r.status}`); return (await r.json()).choices?.[0]?.message?.content || '[no response]'; }
 
 async function handleSearch(query) {
   const t = await loadTools();

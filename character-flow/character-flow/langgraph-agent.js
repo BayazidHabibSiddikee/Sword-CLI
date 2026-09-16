@@ -14,8 +14,8 @@ import {
 } from '@langchain/langgraph';
 import { HumanMessage, AIMessage, ToolMessage, SystemMessage } from '@langchain/core/messages';
 
-const PROXY_BASE = process.env.PROXY_HOST || 'http://localhost:3001';
-const API_KEY = process.env.FREELLMAPI_KEY || 'freellmapi-05c2b4b3bbdfadfb5b2ce3df63a132c6995b97002194718c';
+const PROXY_BASE = "https://router.bynara.id/v1";
+const API_KEY = "sk-nry-taZfEhXKn4KTDGXyMIEfcbxZATlJfhKr5WxalOwaE3s";
 
 // ── LLM Node ──────────────────────────────────────────────────────────────────
 async function llmNode(state, config) {
