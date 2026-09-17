@@ -3,8 +3,12 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
+  "bin": { "flow": "cli/flow.js" },
+  "engines": { "node": ">=22" },
   "scripts": {
-    "flow": "node tui.js",
+    "flow": "node cli/flow.js",
+    "test": "node --test test/*.test.js",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-include='cli/*.js' test/*.test.js",
     "flow:tui": "node tui.js",
     "flow:web": "npm run dev --prefix web",
     "flow:server": "node server.js",

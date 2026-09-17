@@ -1,0 +1,7 @@
+{
+  "name": "characters-launcher",
+  "private": true,
+  "scripts": {
+    "sword": "node character-flow/character-flow/cli/flow.js --shared"
+  }
+}

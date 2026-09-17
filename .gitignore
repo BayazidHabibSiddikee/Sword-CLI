@@ -1,3 +1,7 @@
+# Local coding-agent sessions
+**/.flow/
+
+
 # Dependencies
 **/node_modules/
 **/package-lock.json
