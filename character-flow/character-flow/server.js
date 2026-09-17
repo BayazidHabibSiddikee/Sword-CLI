@@ -33,7 +33,7 @@ const CHARACTERS = {
 
 // In-memory agent cache
 const agents = {};
-const models = ['agnes-2.5-flash', 'auto'];
+const models = ['auto', 'auto'];
 
 async function getWebAgent(charKey) {
   if (agents[charKey]) return agents[charKey];
@@ -57,7 +57,7 @@ async function getWebAgent(charKey) {
     systemPrompt: brainMod.SYSTEM_PROMPT,
     tools: allTools,
     characterName: char.name,
-    modelName: 'agnes-2.5-flash',
+    modelName: 'auto',
     toolExecutor: executor,
     threadId: `web-${charKey}`,
   });

@@ -14,15 +14,15 @@ import {
 } from '@langchain/langgraph';
 import { HumanMessage, AIMessage, ToolMessage, SystemMessage } from '@langchain/core/messages';
 
-const PROXY_BASE = "https://router.bynara.id/v1";
-const API_KEY = "sk-nry-taZfEhXKn4KTDGXyMIEfcbxZATlJfhKr5WxalOwaE3s";
+const OPENAI_BASE_URL = (process.env.OPENAI_BASE_URL || 'http://localhost:3001/v1').replace(/\/+$/, '').replace(/\/v1$/, '');
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 
 // ── LLM Node ──────────────────────────────────────────────────────────────────
 async function llmNode(state, config) {
   const msgs = state.messages || [];
   const sysPrompt = config?.configurable?.system_prompt || '';
   const tools = config?.configurable?.tools || [];
-  const modelName = config?.configurable?.model_name || 'agnes-2.5-flash';
+  const modelName = config?.configurable?.model_name || 'auto';
   const maxTokens = config?.configurable?.max_tokens || 4096;
 
   const allMessages = sysPrompt
@@ -32,8 +32,8 @@ async function llmNode(state, config) {
   const llm = new ChatOpenAI({
     modelName,
     configuration: {
-      baseURL: PROXY_BASE + '/v1',
-      apiKey: API_KEY,
+      baseURL: `${OPENAI_BASE_URL}/v1`,
+      apiKey: OPENAI_API_KEY || undefined,
     },
     temperature: 0.7,
     maxTokens,
@@ -94,7 +94,7 @@ export function buildAgent(config = {}) {
   const {
     systemPrompt = '',
     tools = [],
-    modelName = 'agnes-2.5-flash',
+    modelName = 'auto',
     maxTokens = 4096,
     toolExecutor = null,
   } = config;
@@ -121,7 +121,7 @@ export class LangGraphAgent {
     this.compiled = buildAgent({
       systemPrompt: options.systemPrompt || '',
       tools: options.tools || [],
-      modelName: options.modelName || 'agnes-2.5-flash',
+      modelName: options.modelName || 'auto',
       maxTokens: options.maxTokens || 4096,
       toolExecutor: options.toolExecutor || null,
     });

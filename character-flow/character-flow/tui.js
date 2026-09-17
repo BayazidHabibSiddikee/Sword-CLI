@@ -63,11 +63,11 @@ const CHARACTERS = {
   kael:   { name: 'Kael Vector',    emoji: '🤖', color: '#00FF7F', brain: () => import('./brain/kael_vector.js'),        agentSkills: () => import('./skills/agents/kael.js'),   teamRole: 'ML Engineer — train models, metrics' },
 };
 
-const MODELS = ['agnes-2.5-flash', 'auto'];
+const MODELS = ['auto', 'auto'];
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let currentChar   = 'izuku';
-let currentModel  = 'agnes-2.5-flash';
+let currentModel  = 'auto';
 let teamMode      = false;
 let teamMembers   = [];
 const agents      = {};

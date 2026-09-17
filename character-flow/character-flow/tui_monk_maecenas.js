@@ -6,7 +6,7 @@ import inquirer from 'inquirer';
 import chalk from 'chalk';
 import { SYSTEM_PROMPT, searchKnowledge, getStory, listTopics, getQuote, getStats } from './brain/monk_maecenas.js';
 
-const MODEL = process.env.OPENAI_MODEL || 'agnes-2.5-flash';
+const MODEL = process.env.OPENAI_MODEL || 'auto';
 const BASE_URL = process.env.FREELLM_BASE_URL || 'http://localhost:3001';
 
 async function callLLM(messages) {
