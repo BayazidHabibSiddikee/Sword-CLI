@@ -40,3 +40,9 @@ Thumbs.db
 freellmapi/server/data/
 freellmapi/pids/
 freellmapi/logs/
+freellmapi/decrypt.js
+freellmapi/update_hermes.js
+freellmapi/.env
+freellmapi/**/*.db
+freellmapi/**/*.db-shm
+freellmapi/**/*.db-wal

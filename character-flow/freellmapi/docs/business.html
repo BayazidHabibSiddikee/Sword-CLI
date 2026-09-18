@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Business HQ — Role-Played AI Team</title>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Share+Tech+Mono&family=Rajdhani:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css" rel="stylesheet">
+    <style>
+        @keyframes neonPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+        @keyframes glitch { 0%, 100% { text-shadow: 2px 0 #ff2d6b, -2px 0 #00ffff; } 25% { text-shadow: -2px 0 #ff2d6b, 2px 0 #00ffff; } 50% { text-shadow: 2px 2px #ff2d6b, -2px -2px #00ffff; } 75% { text-shadow: -2px 2px #ff2d6b, 2px -2px #00ffff; } }
+
+        :root {
+            --bg-base:#0a0a0f; --bg-surface:#0d0d15; --bg-hi:#141422; --bg-act:#1a1a2e;
+            --primary:#00ffff; --primary-dim:rgba(0,255,255,.12);
+            --secondary:#ff2d6b; --secondary-dim:rgba(255,45,107,.12);
+            --accent:#bf00ff; --danger:#ff5c5c; --neon-green:#39ff14;
+            --text:#e0e0ff; --muted:#7a7a9e; --sub:#4a4a6a;
+            --border:rgba(0,255,255,.15); --radius:4px;
+            --font-display:'Orbitron',sans-serif; --font-mono:'Share Tech Mono',monospace; --font-body:'Rajdhani',sans-serif;
+        }
+        * { box-sizing:border-box; margin:0; padding:0; font-family:var(--font-body); }
+        body { background:var(--bg-base); color:var(--text); min-height:100vh;
+            background-image:
+                linear-gradient(rgba(0,255,255,.03) 1px,transparent 1px),
+                linear-gradient(90deg,rgba(0,255,255,.03) 1px,transparent 1px),
+                radial-gradient(circle at 10% 0%,rgba(0,255,255,.06),transparent 30%),
+                radial-gradient(circle at 90% 20%,rgba(255,45,107,.04),transparent 30%);
+            background-size:50px 50px,50px 50px,100% 100%,100% 100%;
+            position:relative; }
+        body::after { content:''; position:fixed; top:0; left:0; width:100%; height:100%;
+            background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.08) 2px,rgba(0,0,0,.08) 4px);
+            pointer-events:none; z-index:9999; }
+        ::-webkit-scrollbar { width:4px; height:4px; }
+        ::-webkit-scrollbar-track { background:var(--bg-base); }
+        ::-webkit-scrollbar-thumb { background:var(--primary); border-radius:0; box-shadow:0 0 6px var(--primary); }
+        ::-webkit-scrollbar-thumb:hover { background:var(--secondary); }
+        .topbar { display:flex; align-items:center; justify-content:space-between; padding:14px 24px;
+            border-bottom:1px solid var(--border); background:rgba(10,10,15,.95); position:sticky; top:0; z-index:50;
+            backdrop-filter:blur(12px); flex-wrap:wrap; gap:10px; box-shadow:0 0 20px rgba(0,255,255,.05); }
+        .brand { display:flex; align-items:center; gap:10px; }
+        .brand i { color:var(--primary); font-size:1.6rem; text-shadow:0 0 10px rgba(0,255,255,.5); animation:neonPulse 2s infinite; }
+        .brand h1 { font-family:var(--font-display); font-size:1rem; font-weight:800; letter-spacing:3px;
+            text-transform:uppercase; background:linear-gradient(90deg,var(--primary),var(--secondary));
+            -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+        .nav { display:flex; gap:2px; flex-wrap:wrap; }
+        .nav a { color:var(--muted); text-decoration:none; padding:10px 14px; border-radius:0; font-family:var(--font-display);
+            font-size:.65rem; font-weight:700; letter-spacing:2px; text-transform:uppercase; transition:.2s;
+            display:flex; align-items:center; gap:6px; border-bottom:2px solid transparent; }
+        .nav a:hover { color:var(--secondary); border-bottom-color:var(--secondary); }
+        .nav a.active { background:var(--primary-dim); color:var(--primary); border-bottom-color:var(--primary); text-shadow:0 0 8px rgba(0,255,255,.5); }
+        .container { max-width:1240px; margin:0 auto; padding:24px; }
+        .tabs { display:flex; gap:4px; margin-bottom:20px; flex-wrap:wrap; }
+        .tab-btn { padding:10px 18px; border:1px solid var(--border); background:var(--bg-surface); color:var(--muted);
+            border-radius:0; cursor:pointer; font-family:var(--font-display); font-weight:600; font-size:.7rem;
+            letter-spacing:1.5px; text-transform:uppercase; display:flex; align-items:center; gap:8px; transition:.2s; }
+        .tab-btn:hover { border-color:var(--primary); color:var(--text); }
+        .tab-btn.active { background:var(--primary); color:#000; border-color:var(--primary); box-shadow:0 0 15px rgba(0,255,255,.3); }
+        .panel { display:none; } .panel.active { display:block; }
+        .panel-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; flex-wrap:wrap; gap:10px; }
+        .panel-header h2 { font-family:var(--font-display); font-size:.85rem; font-weight:700; letter-spacing:2px;
+            text-transform:uppercase; color:var(--primary); }
+        .panel-header p { color:var(--muted); font-family:var(--font-mono); font-size:.72rem; letter-spacing:.5px; }
+        .card { background:var(--bg-surface); border:1px solid var(--border); border-radius:var(--radius); padding:18px; margin-bottom:18px; }
+        .card h3 { font-family:var(--font-display); font-size:.72rem; font-weight:700; margin-bottom:12px;
+            display:flex; align-items:center; gap:8px; letter-spacing:2px; text-transform:uppercase; color:var(--primary); }
+        .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+        @media (max-width:900px){ .grid2{ grid-template-columns:1fr; } }
+        .role-select, .field-input, input[type=text], textarea, select {
+            width:100%; padding:10px 12px; background:var(--bg-hi); color:var(--primary);
+            border:1px solid var(--border); border-radius:var(--radius); font-family:var(--font-mono);
+            font-size:.8rem; letter-spacing:.5px; }
+        .role-select:focus, .field-input:focus, input[type=text]:focus, textarea:focus, select:focus {
+            border-color:var(--primary); box-shadow:0 0 8px rgba(0,255,255,.2); outline:none; }
+        select option { background:var(--bg-surface); color:var(--primary); }
+        .char-row { display:flex; align-items:center; gap:12px; padding:10px; border-radius:var(--radius);
+            background:rgba(0,255,255,.02); border:1px solid rgba(0,255,255,.08); margin-bottom:8px; flex-wrap:wrap; }
+        .char-row img { width:40px; height:40px; border-radius:0; object-fit:cover; border:1px solid var(--primary); box-shadow:0 0 8px rgba(0,255,255,.2); }
+        .char-row .info { flex:1; min-width:140px; }
+        .char-row .name { font-family:var(--font-display); font-weight:600; font-size:.75rem; letter-spacing:1px; text-transform:uppercase; }
+        .char-row .role-tag { font-family:var(--font-mono); font-size:.65rem; color:var(--neon-green); font-weight:400; }
+        .char-row .role-select { max-width:190px; }
+        .chars-count { color:var(--muted); font-family:var(--font-mono); font-size:.7rem; }
+        .role-card { display:flex; gap:12px; padding:12px; border:1px solid rgba(0,255,255,.08); border-radius:var(--radius);
+            margin-bottom:10px; background:rgba(0,255,255,.02); }
+        .role-card .icon { font-size:1.4rem; color:var(--primary); padding-top:4px; text-shadow:0 0 8px rgba(0,255,255,.3); }
+        .role-card .fill { flex:1; display:flex; flex-direction:column; gap:6px; }
+        .role-card .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+        .role-card input[type=text], .role-card textarea { background:var(--bg-hi); color:var(--primary);
+            border:1px solid var(--border); border-radius:var(--radius); padding:8px 10px; font-family:var(--font-mono); font-size:.75rem; }
+        .role-card .small { font-size:.75rem; flex:1; min-width:140px; }
+        .btn { display:inline-flex; align-items:center; justify-content:center; gap:8px; padding:11px 18px;
+            border:1px solid var(--border); background:var(--bg-surface); color:var(--text); border-radius:var(--radius);
+            cursor:pointer; font-family:var(--font-display); font-weight:600; font-size:.7rem; letter-spacing:1.5px;
+            text-transform:uppercase; transition:.2s; text-decoration:none; position:relative; overflow:hidden; }
+        .btn::after { content:''; position:absolute; top:0; left:0; width:100%; height:2px;
+            background:linear-gradient(90deg,transparent,var(--primary),transparent); opacity:0; transition:opacity .3s; }
+        .btn:hover::after { opacity:1; }
+        .btn:hover { border-color:var(--primary); background:var(--bg-hi); box-shadow:0 0 8px rgba(0,255,255,.15); }
+        .btn.primary { background:linear-gradient(135deg,var(--primary),var(--accent)); color:#000; border-color:var(--primary);
+            box-shadow:0 0 15px rgba(0,255,255,.3); }
+        .btn.primary:hover { box-shadow:0 0 25px rgba(0,255,255,.5); filter:brightness(1.1); }
+        .btn.danger:hover { border-color:var(--danger); color:var(--danger); }
+        .btn.small { padding:6px 10px; font-size:.65rem; }
+        .btn:disabled { opacity:.3; cursor:not-allowed; }
+        .meet-top { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; }
+        .meet-top .grow { flex:1; min-width:220px; }
+        label.field { display:block; font-family:var(--font-mono); font-size:.65rem; font-weight:400;
+            color:var(--primary); letter-spacing:2px; text-transform:uppercase; margin-bottom:6px; }
+        .chip-select { display:flex; flex-wrap:wrap; gap:8px; }
+        .chip { padding:8px 12px; border:1px solid var(--border); border-radius:0; cursor:pointer;
+            font-family:var(--font-mono); font-size:.75rem; font-weight:400; color:var(--muted);
+            background:var(--bg-surface); user-select:none; transition:.15s; letter-spacing:.5px; }
+        .chip .tag { margin-left:5px; font-size:.6rem; color:var(--secondary); }
+        .chip.selected { background:var(--primary-dim); color:var(--primary); border-color:var(--primary);
+            box-shadow:0 0 8px rgba(0,255,255,.2); }
+        .chip.selected .tag { color:var(--neon-green); }
+        .toggle-row { display:flex; align-items:center; gap:10px; }
+        .switch { position:relative; width:42px; height:22px; display:inline-block; }
+        .switch input { opacity:0; width:0; height:0; }
+        .slider { position:absolute; inset:0; background:var(--bg-hi); border:1px solid var(--border); border-radius:0; transition:.25s; }
+        .slider:before { content:""; position:absolute; width:14px; height:14px; left:3px; top:3px;
+            background:var(--sub); border-radius:0; transition:.25s; }
+        .switch input:checked + .slider { background:var(--primary-dim); border-color:var(--primary); }
+        .switch input:checked + .slider:before { transform:translateX(20px); background:var(--primary); box-shadow:0 0 8px var(--primary); }
+        .meet-log { max-height:520px; overflow-y:auto; display:flex; flex-direction:column; gap:14px; padding:4px; }
+        .msg { display:flex; gap:12px; align-items:flex-start; }
+        .msg .avatar { width:42px; height:42px; border-radius:0; object-fit:cover; border:1px solid var(--primary);
+            box-shadow:0 0 8px rgba(0,255,255,.2); flex-shrink:0; }
+        .msg .bubble { background:var(--bg-hi); border:1px solid rgba(0,255,255,.08); border-radius:0;
+            border-left:2px solid var(--primary); padding:12px 14px; max-width:720px; }
+        .msg .head { display:flex; align-items:center; gap:8px; margin-bottom:6px; flex-wrap:wrap; }
+        .msg .speaker { font-family:var(--font-display); font-weight:700; font-size:.7rem; letter-spacing:2px;
+            text-transform:uppercase; color:var(--primary); }
+        .msg .role-badge { font-family:var(--font-mono); font-size:.6rem; font-weight:400; color:#000;
+            background:var(--secondary); padding:2px 8px; border-radius:0; letter-spacing:1px; text-transform:uppercase; }
+        .msg .role-badge.unassigned { background:var(--bg-act); color:var(--muted); }
+        .msg .text { font-family:var(--font-body); font-size:.86rem; line-height:1.6; white-space:pre-wrap; color:var(--text); }
+        .msg.user { flex-direction:row-reverse; }
+        .msg.user .bubble { background:var(--primary-dim); border-color:var(--primary); border-left-color:var(--secondary); }
+        .dropzone { border:2px dashed var(--border); border-radius:var(--radius); padding:36px; text-align:center;
+            cursor:pointer; transition:.2s; color:var(--muted); }
+        .dropzone:hover, .dropzone.drag { border-color:var(--primary); color:var(--text); background:var(--primary-dim);
+            box-shadow:0 0 15px rgba(0,255,255,.1); }
+        .dropzone i { font-size:2.4rem; display:block; margin-bottom:10px; color:var(--primary); text-shadow:0 0 10px rgba(0,255,255,.3); }
+        .doc { display:flex; align-items:center; gap:12px; padding:10px 12px; border:1px solid rgba(0,255,255,.08);
+            border-radius:var(--radius); margin-bottom:8px; background:rgba(0,255,255,.02); }
+        .doc .icon { font-size:1.3rem; }
+        .doc .meta { flex:1; min-width:0; }
+        .doc .meta .n { font-family:var(--font-display); font-weight:600; font-size:.72rem; letter-spacing:1px;
+            text-transform:uppercase; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .doc .meta .sub { font-family:var(--font-mono); font-size:.6rem; color:var(--muted); }
+        .empty { text-align:center; color:var(--muted); padding:24px; font-family:var(--font-mono); font-size:.75rem;
+            letter-spacing:1px; }
+        .search-row { display:flex; gap:10px; margin:14px 0; }
+        .search-row input { flex:1; }
+        .hit { border-left:2px solid var(--primary); padding:10px 12px; margin-bottom:10px;
+            background:rgba(0,255,255,.02); border-radius:0; }
+        .hit .docname { font-family:var(--font-display); font-weight:700; font-size:.72rem; color:var(--primary);
+            margin-bottom:4px; letter-spacing:1px; text-transform:uppercase; }
+        .hit .score { font-family:var(--font-mono); font-size:.6rem; color:var(--muted); }
+        .hit .excerpt { font-family:var(--font-body); font-size:.82rem; color:var(--muted); line-height:1.5; }
+        .loading { text-align:center; color:var(--muted); padding:20px; font-family:var(--font-mono); font-size:.75rem; }
+        .status { font-family:var(--font-mono); font-size:.75rem; color:var(--neon-green); letter-spacing:.5px; }
+        .status.err { color:var(--danger); }
+        .statusbar { min-height:20px; }
+    </style>
+</head>
+<body>
+    <div class="topbar">
+        <div class="brand"><i class="ri-briefcase-4-line"></i><h1>BUSINESS::HQ</h1></div>
+        <nav class="nav">
+            <a href="/debate"><i class="ri-chat-1-line"></i> Debate</a>
+            <a href="/knowledge"><i class="ri-book-open-line"></i> Knowledge</a>
+            <a href="/personal"><i class="ri-user-heart-line"></i> Personal</a>
+            <a href="/business" class="active"><i class="ri-briefcase-4-line"></i> Business</a>
+        </nav>
+    </div>
+    <div class="container">
+        <div class="statusbar"><span id="healthStatus" class="status"></span></div>
+        <div class="tabs">
+            <button class="tab-btn active" onclick="switchTab('team')"><i class="ri-user-line"></i> Team &amp; Roles</button>
+            <button class="tab-btn" onclick="switchTab('meeting')"><i class="ri-vidicon-line"></i> Meeting</button>
+            <button class="tab-btn" onclick="switchTab('library')"><i class="ri-book-open-line"></i> Knowledge Library</button>
+        </div>
+
+        <!-- Team & Roles -->
+        <section class="panel active" id="panel-team">
+            <div class="panel-header">
+                <div>
+                    <h2>Team &amp; Role Assignments</h2>
+                    <p>Give each AI character a role — their role prompt is appended to their character prompt while talking.</p>
+                </div>
+                <button class="btn primary" onclick="saveRoles()"><i class="ri-save-line"></i> Save Assignments</button>
+            </div>
+            <div class="grid2">
+                <div class="card">
+                    <h3><i class="ri-group-line"></i> Characters</h3>
+                    <div id="charsRoster" class="loading">Loading characters...</div>
+                </div>
+                <div class="card">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                        <h3 style="margin:0"><i class="ri-settings-2-line"></i> Roles &amp; Prompts</h3>
+                        <button class="btn small" onclick="addRole()"><i class="ri-add-line"></i> Add Role</button>
+                    </div>
+                    <div id="roleEditor"></div>
+                </div>
+            </div>
+        </section>
+<!-- Meeting -->
+        <section class="panel" id="panel-meeting">
+            <div class="panel-header">
+                <div>
+                    <h2>Strategy Meeting</h2>
+                    <p>Assigned roles are injected into each character's system prompt while they talk.</p>
+                </div>
+            </div>
+            <div class="card">
+                <div class="meet-top">
+                    <div class="grow">
+                        <label class="field">Meeting Topic</label>
+                        <input type="text" id="meetTopic" class="field-input" placeholder="ENTER MISSION PARAMETERS...">
+                    </div>
+                    <div>
+                        <label class="field">Mode</label>
+                        <select id="meetMode" class="field-input">
+                            <option value="round_robin">ROUND ROBIN</option>
+                            <option value="random">RANDOM</option>
+                        </select>
+                    </div>
+                    <div class="toggle-row">
+                        <label class="switch"><input type="checkbox" id="meetRag" checked><span class="slider"></span></label>
+                        <span style="font-family:var(--font-mono);font-size:.7rem;color:var(--muted);letter-spacing:.5px;">ENABLE RAG FEED</span>
+                    </div>
+                </div>
+                <div style="margin-top:14px;">
+                    <label class="field">Participants (characters)</label>
+                    <div class="chip-select" id="meetChars"></div>
+                </div>
+                <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap;">
+                    <button class="btn primary" onclick="nextTurn()"><i class="ri-flashlight-fill"></i> Next Speaker</button>
+                    <button class="btn" onclick="resetMeeting()"><i class="ri-refresh-line"></i> Reset</button>
+                </div>
+            </div>
+            <div class="card">
+                <h3><i class="ri-conversation-line"></i> Meeting Log</h3>
+                <div class="meet-log" id="meetLog">
+                    <div class="empty">SELECT PARTICIPANTS AND PRESS <strong>NEXT SPEAKER</strong></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Library -->
+        <section class="panel" id="panel-library">
+            <div class="panel-header">
+                <div>
+                    <h2>Knowledge Library — Hybrid RAG (BM25 + Embeddings)</h2>
+                    <p>Upload docs (.md, .txt, .docx, .pdf). Text is chunked, BM25-indexed and embedded; meetings &amp; searches retrieve via Reciprocal Rank Fusion.</p>
+                </div>
+            </div>
+            <div class="card">
+                <div class="dropzone" id="dropzone" onclick="document.getElementById('fileInput').click()">
+                    <i class="ri-upload-cloud-2-line"></i>
+                    <div><strong>Drop files</strong> or click to browse</div>
+                    <div style="font-size:.78rem;margin-top:6px;">.md &nbsp;.txt &nbsp;.docx &nbsp;.pdf &nbsp;.html &nbsp;.json &nbsp;.csv</div>
+                </div>
+                <input type="file" id="fileInput" accept=".md,.txt,.docx,.pdf,.html,.json,.csv" style="display:none" multiple onchange="handleUpload(event)">
+let chars = [];
+        let roles = [];
+        let assignments = {};          // character name -> role id
+        let draftAssign = {};          // pending role selections (not yet saved)
+        let meeting = { topic: '', participants: [], history: [], mode: 'round_robin', useRag: true };
+
+        const $ = (id) => document.getElementById(id);
+        const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+        const fmtSize = (n) => n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(1) + ' MB';
+
+        function roleTitle(roleId) {
+            const r = roles.find(x => x.id === roleId);
+            return r ? r.name : null;
+        }
+
+        async function loadConfig() {
+            try {
+                const res = await fetch('/business/api/config');
+                const data = await res.json();
+                chars = data.characters || [];
+                roles = data.roles || [];
+                assignments = data.assignments || {};
+                draftAssign = Object.assign({}, assignments);
+                renderRoster(); renderRoles(); renderMeetingChips(); renderDocList();
+            } catch (e) {
+                $('charsRoster').innerHTML = '<div class="empty">CONFIG LOAD FAILED</div>';
+            }
+        }
+
+        function renderRoster() {
+            const n = Object.values(draftAssign).filter(id => id).length;
+            let html = `<div class="chars-count">${chars.length} characters · ${n} have a role</div>`;
+            for (const c of chars) {
+                const cur = draftAssign[c.name] || '';
+                html += `<div class="char-row">
+                    <img src="${esc(c.image || '/images/default.png')}" onerror="this.style.visibility='hidden'">
+                    <div class="info">
+                        <div class="name">${esc(c.name)}</div>
+                        <div class="role-tag">${esc(roleTitle(cur) || 'UNASSIGNED')}</div>
+                    </div>
+                    <select class="role-select" onchange="setRole('${esc(c.name.replace(/'/g, "\\'"))}', this.value)">
+                        <option value="">— NO ROLE —</option>
+                        ${roles.map(r => `<option value="${esc(r.id)}" ${cur === r.id ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}
+                    </select>
+                </div>`;
+            }
+            $('charsRoster').innerHTML = html;
+        }
+
+        function setRole(name, roleId) {
+            if (!roleId) delete draftAssign[name];
+            else draftAssign[name] = roleId;
+            renderRoster();
+        }
+                <div class="statusbar" id="uploadStatus"></div>
+            </div>
+            <div class="card">
+                <h3><i class="ri-archive-line"></i> Indexed Documents</h3>
+                <div id="docList"><div class="empty">NO DOCUMENTS INDEXED</div></div>
+            </div>
+            <div class="card">
+                <h3><i class="ri-search-line"></i> Hybrid Search</h3>
+                <div class="search-row">
+                    <input type="text" id="searchInput" class="field-input" placeholder="SCAN DATABASE..." onkeypress="if(event.key==='Enter')doSearch()">
+                    <button class="btn primary" onclick="doSearch()"><i class="ri-search-line"></i> Search</button>
+                </div>
+                <div id="searchResults"><div class="empty">BM25 + EMBEDDING RETRIEVAL</div></div>
+            </div>
+        </section>
+    </div>
+
+    <script>
+function renderRoles() {
+            if (!roles.length) { $('roleEditor').innerHTML = '<div class="empty">NO ROLES DEFINED — ADD ONE</div>'; return; }
+            $('roleEditor').innerHTML = roles.map((r, i) => `
+                <div class="role-card">
+                    <div class="icon"><i class="${esc(r.icon || 'ri-user-line')}"></i></div>
+                    <div class="fill">
+                        <div class="row">
+                            <input type="text" value="${esc(r.name)}" placeholder="Name" class="small" onchange="editRole(${i},'name',this.value)">
+                            <input type="text" value="${esc(r.title)}" placeholder="Title" class="small" onchange="editRole(${i},'title',this.value)">
+                        </div>
+                        <textarea rows="3" placeholder="Role prompt (appended to character prompt)" onchange="editRole(${i},'prompt',this.value)">${esc(r.prompt)}</textarea>
+                        <div class="row">
+                            <input type="text" value="${esc(r.icon)}" placeholder="icon (ri-...)" class="small" onchange="editRole(${i},'icon',this.value)">
+                            <button class="btn small danger" onclick="removeRole('${esc(r.id)}')"><i class="ri-delete-bin-line"></i> Delete</button>
+                        </div>
+                    </div>
+                </div>`).join('');
+        }
+
+        function editRole(idx, field, value) { roles[idx][field] = value; }
+
+        function addRole() {
+            const id = 'role_' + Date.now().toString(36);
+            roles.push({ id, name: 'New Role', title: 'New Role', icon: 'ri-user-line', prompt: 'You are a leader in this business. Add a clear mandate here.' });
+            renderRoles(); renderRoster(); renderMeetingChips();
+        }
+
+        function removeRole(id) {
+            roles = roles.filter(r => r.id !== id);
+            for (const k of Object.keys(draftAssign)) if (draftAssign[k] === id) delete draftAssign[k];
+            renderRoles(); renderRoster(); renderMeetingChips();
+        }
+
+        async function saveRoles() {
+            try {
+                const res = await fetch('/business/api/config', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ roles, assignments: draftAssign }),
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    roles = data.roles; assignments = data.assignments; draftAssign = Object.assign({}, assignments);
+                    setStatus('Saved assignments &amp; role prompts.', false);
+                    renderRoster(); renderRoles(); renderMeetingChips();
+                } else setStatus('Save failed: ' + (data.error || res.status), true);
+            } catch (e) { setStatus('Could not save.', true); }
+        }
+
+        function switchTab(name) {
+            const btns = document.querySelectorAll('.tab-btn');
+            const panels = document.querySelectorAll('.panel');
+            btns.forEach(b => b.classList.remove('active'));
+            panels.forEach(p => p.classList.remove('active'));
+// --- Meeting chat ----------------------------------------------------------
+        function renderMeetingChips() {
+            if (!chars.length) {             $('meetChars').innerHTML = '<div class="empty">NO CHARACTERS LOADED</div>'; return; }
+            $('meetChars').innerHTML = chars.map(c => {
+                const sel = meeting.participants.includes(c.name);
+                const roleT = roleTitle(assignments[c.name]);
+                return `<span class="chip ${sel ? 'selected' : ''}" onclick="toggleChar('${esc(c.name.replace(/'/g, "\\'"))}', this)">
+                    ${esc(c.name)}${roleT ? `<span class="tag">${esc(roleT)}</span>` : ''}
+                </span>`;
+            }).join('');
+            ensureUserInput();
+        }
+
+        function toggleChar(name, el) {
+            const i = meeting.participants.indexOf(name);
+            if (i >= 0) meeting.participants.splice(i, 1);
+            else meeting.participants.push(name);
+            el.classList.toggle('selected');
+        }
+
+        function ensureUserInput() {
+            if ($('userInputRow')) return;
+            const wrap = document.createElement('div');
+            wrap.id = 'userInputRow';
+            wrap.style.cssText = 'display:flex;gap:10px;margin-top:14px;';
+            wrap.innerHTML = `
+                <input type="text" id="meetUserMsg" class="field-input" placeholder="INPUT TRANSMISSION..." onkeypress="if(event.key==='Enter')sendUser()">
+                <button class="btn" onclick="sendUser()"><i class="ri-send-plane-fill"></i> Send</button>`;
+            $('meetLog').parentElement.appendChild(wrap);
+        }
+
+        async function nextTurn(forced) {
+            const topic = $('meetTopic').value.trim() || 'Strategy session';
+            if (meeting.participants.length < 2 && !forced) { setStatus('Select at least 2 participants.', true); return; }
+            const btn = $('meetLog').parentElement.querySelector('button.btn.primary');
+            if (btn) btn.disabled = true;
+            removeTmp();
+            const statusEl = document.createElement('div');
+            statusEl.id = 'meetStatus'; statusEl.classList.add('statusbar');
+            statusEl.innerHTML = '<span class="status"><i class="ri-loader-4-line" style="animation:spin 1s linear infinite"></i> Thinking...</span>';
+            $('meetLog').appendChild(statusEl);
+            try {
+                const res = await fetch('/business/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        topic, participants: meeting.participants, history: meeting.history,
+                        mode: meeting.mode, use_rag: $('meetRag').checked, user_name: 'You',
+                    }),
+                });
+                const data = await res.json();
+                if (!res.ok) { setStatus('Chat error: ' + (data.error || res.status), true); return; }
+                meeting.history.push({ speaker: data.speaker, text: data.text });
+                appendMsg(data.speaker, data.text, data.role);
+            } catch (e) { setStatus('Could not reach LLM.', true); }
+            finally { const b = $('meetLog').parentElement.querySelector('button.btn.primary'); if (b) b.disabled = false; removeTmp(); }
+        }
+
+        function removeTmp() { const s = $('meetStatus'); if (s) s.remove(); }
+
+        async function sendUser() {
+            const text = $('meetUserMsg').value.trim();
+            if (!text) return;
+            meeting.history.push({ speaker: 'You', text });
+            appendMsg('You', text, null, true);
+            $('meetUserMsg').value = '';
+            await nextTurn(true);
+        }
+
+        function appendMsg(speaker, text, role, isUser) {
+            const log = $('meetLog');
+            const empty = log.querySelector('.empty'); if (empty) empty.remove();
+            const img = (chars.find(c => c.name === speaker) || {}).image;
+            const el = document.createElement('div');
+            el.className = 'msg' + (isUser ? ' user' : '');
+            el.innerHTML = `
+                <img class="avatar" src="${esc(img || '/images/default.png')}" onerror="this.style.visibility='hidden'">
+                <div class="bubble">
+                    <div class="head">
+                        <span class="speaker">${esc(speaker)}</span>
+                        ${role ? `<span class="role-badge">${esc(role)}</span>` : '<span class="role-badge unassigned">team</span>'}
+                    </div>
+                    <div class="text">${esc(text)}</div>
+                </div>`;
+            log.appendChild(el);
+            log.scrollTop = log.scrollHeight;
+        }
+
+        function resetMeeting() {
+            meeting.history = [];
+            $('meetLog').innerHTML = '<div class="empty">MEETING CLEARED</div>';
+            const row = $('userInputRow'); if (row) row.remove();
+            ensureUserInput();
+        }
+            const idx = ['team', 'meeting', 'library'].indexOf(name);
+            if (idx >= 0) { btns[idx].classList.add('active'); $('panel-' + name).classList.add('active'); }
+        }
+
+        function setStatus(msg, isErr) {
+            const el = $('healthStatus');
+            el.innerHTML = (isErr ? '⚠️ ' : '✅ ') + msg;
+            el.classList.toggle('err', !!isErr);
+// --- Library / RAG ------------------------------------------------------
+        async function uploadFiles(files) {
+            if (!files.length) return;
+            $('uploadStatus').innerHTML = 'Indexing files (BM25 + embeddings)...';
+            for (const f of files) {
+                const fd = new FormData();
+                fd.append('file', f);
+                try {
+                    const res = await fetch('/business/api/upload', { method: 'POST', body: fd });
+                    const data = await res.json();
+                    $('uploadStatus').innerHTML += `<br>${res.ok ? '✅' : '❌'} ${esc(f.name)} — ${esc(data.message || data.error || res.status)}`;
+                } catch (e) { $('uploadStatus').innerHTML += `<br>❌ ${esc(f.name)} — network error`; }
+            }
+            $('fileInput').value = '';
+            renderDocList();
+        }
+
+        async function handleUpload(ev) { await uploadFiles(Array.from(ev.target.files)); }
+
+        async function renderDocList() {
+            try {
+                const res = await fetch('/business/api/library');
+                const data = await res.json();
+                const docs = data.documents || [];
+                if (!docs.length) { $('docList').innerHTML = '<div class="empty">NO DOCUMENTS INDEXED</div>'; return; }
+                $('docList').innerHTML = docs.map(d => `
+                    <div class="doc">
+                        <div class="icon">${iconFor(d.ext)}</div>
+                        <div class="meta">
+                            <div class="n" title="${esc(d.name)}">${esc(d.name)}${d.note ? ' <span style="color:var(--danger)">⚠️</span>' : ''}</div>
+                            <div class="sub">${d.chunks} chunks · ${fmtSize(d.size)} · ${fmtDate(d.uploadedAt)}</div>
+                        </div>
+                        <a class="btn small" href="/business/api/library/${esc(d.id)}/file" download><i class="ri-download-line"></i></a>
+                        <button class="btn small danger" onclick="deleteDoc('${esc(d.id)}')"><i class="ri-delete-bin-line"></i></button>
+                    </div>`).join('');
+            } catch (e) { $('docList').innerHTML = '<div class="empty">LIBRARY LOAD FAILED</div>'; }
+        }
+
+        function iconFor(ext) {
+            const m = { '.pdf': '<i class="ri-file-pdf-2-line" style="color:#ff5c5c"></i>',
+                '.docx': '<i class="ri-file-word-2-line" style="color:#3b82f6"></i>',
+                '.md': '<i class="ri-markdown-line" style="color:#00e5a0"></i>',
+                '.txt': '<i class="ri-file-text-line" style="color:#ffb020"></i>',
+                '.html': '<i class="ri-code-line" style="color:#a78bfa"></i>',
+                '.json': '<i class="ri-braces-line" style="color:#f472b6"></i>' };
+            return m[ext] || '<i class="ri-file-line" style="color:#93a4c0"></i>';
+        }
+
+        async function deleteDoc(id) {
+            if (!confirm('Delete this indexed document?')) return;
+            await fetch('/business/api/library/' + id, { method: 'DELETE' });
+            renderDocList();
+        }
+
+        async function doSearch() {
+            const q = $('searchInput').value.trim();
+            if (!q) return;
+            $('searchResults').innerHTML = '<div class="loading">Searching BM25 + embeddings...</div>';
+            try {
+                const res = await fetch('/business/api/search', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: q, top_k: 8 }),
+                });
+                const data = await res.json();
+                const hits = data.results || [];
+                if (!hits.length) { $('searchResults').innerHTML = '<div class="empty">NO MATCHES FOUND</div>'; return; }
+                $('searchResults').innerHTML = hits.map((h, i) => `
+                    <div class="hit">
+                        <div class="docname">${i + 1}. ${esc(h.docName)}</div>
+                        <div class="score">BM25 ${h.bm25Score.toFixed(3)} · Embedding ${h.embeddingScore.toFixed(3)} · RRF ${h.finalScore.toFixed(3)}</div>
+                        <div class="excerpt">${esc(h.text)}</div>
+                    </div>`).join('');
+            } catch (e) { $('searchResults').innerHTML = '<div class="empty">SEARCH FAILED</div>'; }
+        }
+
+        // --- init ---------------------------------------------------------------
+        document.addEventListener('DOMContentLoaded', async () => {
+            await loadConfig();
+            ensureUserInput();
+            try {
+                const res = await fetch('/business/api/health');
+                const h = await res.json();
+                setStatus(`Operational · ${h.characters} characters · ${h.roles} roles · ${h.indexed_documents} docs indexed.`, false);
+            } catch (e) { setStatus('Business API offline.', true); }
+            const dz = $('dropzone');
+            ['dragenter', 'dragover'].forEach(ev => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('drag'); }));
+            ['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove('drag'); }));
+            dz.addEventListener('drop', (e) => {
+                e.preventDefault();
+                if (e.dataTransfer && e.dataTransfer.files) uploadFiles(Array.from(e.dataTransfer.files));
+            });
+        });
+    </script>
+</body>
+</html>

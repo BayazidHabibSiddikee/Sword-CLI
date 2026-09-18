@@ -16,6 +16,7 @@ import { sessions } from './skills/sessions.js';
 
 const PORT = parseInt(process.env.PORT || '3002');
 const PROXY_BASE = process.env.PROXY_HOST || 'http://localhost:3001';
+const FREELLMAPI_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'freellmapi');
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // ── Character Registry ────────────────────────────────────────────────────────
@@ -215,10 +216,6 @@ const server = createServer(async (req, res) => {
   ];
   let filePath = candidates.find(p => existsSync(p));
   if (!filePath) {
-    filePath = join(staticPath, 'index.html');
-  }
-  let filePath = join(staticPath, path === '/' ? 'index.html' : path);
-  if (!existsSync(filePath)) {
     // SPA fallback: serve index.html for any non-file route
     filePath = join(staticPath, 'index.html');
   }
@@ -247,18 +244,15 @@ async function readBody(req) {
 }
 
 server.listen(PORT, () => {
-  console.log(`   🌐 Character Flow API: http://localhost:${PORT}`);
-  console.log(`   💬 Chat API:       POST /api/chat {character, message}`);
-  console.log(`   🤖 Characters:     GET  /api/characters`);
-  console.log(`   🔧 Skills:         GET  /api/skills`);
-  console.log(`   💾 Tasks:          GET  /api/tasks | POST /api/tasks`);
-  console.log(`   📊 Stats:          GET  /api/stats`);
-  console.log(`   💬 Sessions:       GET  /api/sessions`);
-  console.log(`   🔗 Proxy:          /v1/* → ${PROXY_BASE}`);
+  console.log(`   🌐 SwordCLI API:       http://localhost:${PORT}`);
+  console.log(`   💬 Chat API:          POST /api/chat {character, message}`);
+  console.log(`   🤖 Characters:        GET  /api/characters`);
+  console.log(`   🔧 Skills:            GET  /api/skills`);
+  console.log(`   💾 Tasks:             GET  /api/tasks | POST /api/tasks`);
+  console.log(`   📊 Stats:             GET  /api/stats`);
+  console.log(`   💬 Sessions:          GET  /api/sessions`);
+  console.log(`   🔗 Proxy (freellmapi): /v1/* → ${PROXY_BASE}`);
   console.log('');
-  console.log('   Web UI:          Open browser to http://localhost:3002');
-  console.log('   Cyberpunk Pages: http://localhost:3002/debate.html');
-  console.log('                    http://localhost:3002/personal.html');
-  console.log('                    http://localhost:3002/business.html');
-  console.log('                    http://localhost:3002/knowledge.html');
+  console.log('   Web UI: http://localhost:3002');
+  console.log('   Freellmapi: run "cd freellmapi && npm run dev" on port 3001');
 });

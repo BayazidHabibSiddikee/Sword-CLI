@@ -1,0 +1,11 @@
+{
+  "comment": "Typed MCP tools over the freellmapi Business RAG library (BM25 + embeddings hybrid search). Launch from the repo root. Tools: rag_search, rag_build_context, rag_list_documents, rag_get_document, rag_delete_document [DESTRUCTIVE — requires confirm:true].",
+  "mcpServers": {
+    "freellmapi-rag": {
+      "command": "npx",
+      "args": ["tsx", "server/src/mcp/rag-mcp-server.ts"],
+      "cwd": ".",
+      "env": {}
+    }
+  }
+}
