@@ -2,7 +2,8 @@
  * server.js — Character Flow Web API Server
  * Serves the React web UI + provides REST endpoints for character chat, skills, sessions, tasks.
  */
-import { createServer } from 'http';
+import { createServer, request as httpRequest } from 'http';
+import { request as httpsRequest } from 'https';
 import { readFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -83,7 +84,7 @@ const server = createServer(async (req, res) => {
 
   // ── CORS headers ──
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
@@ -169,8 +170,53 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  // ── Serve static files ──
+  // ── Proxy /v1/* to freellmapi ──
+  if (path.startsWith('/v1/')) {
+    try {
+      const targetUrl = new URL(path + url.search, PROXY_BASE);
+      const isHttps = targetUrl.protocol === 'https:';
+      const reqFn = isHttps ? httpsRequest : httpRequest;
+
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      const body = Buffer.concat(chunks);
+
+      const proxyReq = reqFn(targetUrl, {
+        method,
+        headers: {
+          ...req.headers,
+          host: targetUrl.host,
+          'content-length': body.length,
+        },
+      }, (proxyRes) => {
+        res.writeHead(proxyRes.statusCode, proxyRes.headers);
+        proxyRes.pipe(res);
+      });
+
+      proxyReq.on('error', (err) => {
+        console.error(`[proxy] Error forwarding ${path}:`, err.message);
+        sendJson(res, 502, { error: `Proxy error: ${err.message}` });
+      });
+
+      if (body.length > 0) proxyReq.write(body);
+      proxyReq.end();
+    } catch (err) {
+      sendJson(res, 502, { error: `Proxy error: ${err.message}` });
+    }
+    return;
+  }
+
+  // ── Serve static files (dist + public) ──
+  const publicPath = join(__dirname, 'web', 'public');
   const staticPath = join(__dirname, 'web', 'dist');
+  const candidates = [
+    join(publicPath, path === '/' ? 'index.html' : path),
+    join(staticPath, path === '/' ? 'index.html' : path),
+  ];
+  let filePath = candidates.find(p => existsSync(p));
+  if (!filePath) {
+    filePath = join(staticPath, 'index.html');
+  }
   let filePath = join(staticPath, path === '/' ? 'index.html' : path);
   if (!existsSync(filePath)) {
     // SPA fallback: serve index.html for any non-file route
@@ -208,6 +254,11 @@ server.listen(PORT, () => {
   console.log(`   💾 Tasks:          GET  /api/tasks | POST /api/tasks`);
   console.log(`   📊 Stats:          GET  /api/stats`);
   console.log(`   💬 Sessions:       GET  /api/sessions`);
+  console.log(`   🔗 Proxy:          /v1/* → ${PROXY_BASE}`);
   console.log('');
   console.log('   Web UI:          Open browser to http://localhost:3002');
+  console.log('   Cyberpunk Pages: http://localhost:3002/debate.html');
+  console.log('                    http://localhost:3002/personal.html');
+  console.log('                    http://localhost:3002/business.html');
+  console.log('                    http://localhost:3002/knowledge.html');
 });
