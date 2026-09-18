@@ -13,6 +13,7 @@ import { createSharedClient, recentContext } from './shared.js';
 import { resolveModel } from './model.js';
 import { RagEngine } from '../brain/rag.js';
 import { sessions } from '../skills/sessions.js';
+import { G4F } from 'g4f';
 import {
   cancelMessage, timeoutMessage, toolLine, friendlyError,
   approvePrompt, statusLine, markdownLite, closestCommand,
@@ -23,6 +24,25 @@ import {
 const __dirname = import.meta.dirname; // Node ≥20.6; safe in this project
 const ragDb = new RagEngine(join(__dirname, 'brain', 'rag.db'));
 let localSessionHistory = [];   // messages loaded from --session file at startup
+
+// ── g4f direct request (no backend needed) ────────────────────────────────────
+let g4fClient = null;
+function createG4fRequest(tools, signal, onToken) {
+  g4fClient ??= new G4F();
+  return async messages => {
+    // g4f doesn't support tools, so strip tool_calls and convert to plain text
+    const plainMessages = messages.map(m => ({
+      role: m.role === 'tool' ? 'assistant' : m.role,
+      content: m.content || (m.tool_calls ? '[Tool call results omitted]' : '')
+    })).filter(m => m.content);
+    const result = await g4fClient.chatCompletion({
+      messages: plainMessages,
+      model: 'gpt-4o-mini',
+    });
+    const text = typeof result === 'string' ? result : result?.content ?? result?.text ?? result?.message?.content ?? '';
+    return { choices: [{ message: { role: 'assistant', content: text || 'No response from g4f' } }] };
+  };
+}
 
 // Character brain modules for team-mode round-robin
 const TEAM_CHARACTERS = ['izuku', 'kael', 'mahina', 'muhan', 'sable', 'turing', 'plastos', 'prince_rishad', 'monk_maecenas', 'ada_vance'];
@@ -69,11 +89,14 @@ async function main() {
   if (!(await stat(cwd)).isDirectory()) throw new Error('--cwd must be a directory');
   if (values.local && (values['shared-session'] || values['import-session'])) throw new Error('--local cannot be combined with shared-session or import-session');
   if (values.local && values.shared) throw new Error('--local and --shared are mutually exclusive; choose one session mode');
-  const useShared = !values.local && (values.shared || Boolean(values['shared-session']));
+  const swordEnv = await configureSwordBackend(process.env);
+  const useG4f = swordEnv._swordG4fFallback === true;
+  if (useG4f && interactive) console.error('[SwordCLI] No freellmapi backend detected — using g4f (free) as provider.\n');
+  const useShared = !values.local && !useG4f && (values.shared || Boolean(values['shared-session']));
   if ((useShared && values.session) || (values['import-session'] && (!values.shared || values['shared-session']))) throw new Error('Use --import-session NAME with --shared to copy a local session, not --session');
-  const config = providerConfig(await configureSwordBackend(process.env));
+  const config = useG4f ? { url: '', key: '', model: 'auto' } : providerConfig(swordEnv);
   // Prefer a strong tool-capable model over the backend's balanced auto-routing.
-  const selectedModel = await resolveModel(config, values.model);
+  const selectedModel = useG4f ? 'auto' : await resolveModel(config, values.model);
   const client = useShared ? createSharedClient(config) : null;
   let shared = client ? (values['shared-session'] ? await client.getSession(values['shared-session']) :
     await client.createSession({ title: values['import-session'] || 'SwordCLI session', workdir: cwd, mode: values.mode, model: selectedModel })) : null;
@@ -164,7 +187,7 @@ async function main() {
             ];
             const agentResult = await runTurn({
               messages: agentInputs,
-              request: createRequest(provider, toolDefinitions, active.signal, undefined),
+              request: useG4f ? createG4fRequest(toolDefinitions, active.signal, undefined) : createRequest(provider, toolDefinitions, active.signal, undefined),
               execute,
               signal: active.signal,
               maxSteps: 3,
@@ -189,7 +212,7 @@ async function main() {
           ];
           const writerResult = await runTurn({
             messages: writerInputs,
-            request: createRequest(provider, toolDefinitions, active.signal, values.json ? undefined : onToken),
+            request: useG4f ? createG4fRequest(toolDefinitions, active.signal, values.json ? undefined : onToken) : createRequest(provider, toolDefinitions, active.signal, values.json ? undefined : onToken),
             execute,
             signal: active.signal,
             onEvent: (name, info) => { if (info === undefined) console.error(`  ${toolLine(name)}`); else console.error(`  ${toolLine(name, info)}`); },
@@ -215,7 +238,7 @@ async function main() {
           : undefined;
         result = await runTurn({
           messages: inputs,
-          request: createRequest(provider, toolDefinitions, active.signal, onToken), execute, signal: active.signal,
+          request: useG4f ? createG4fRequest(toolDefinitions, active.signal, onToken) : createRequest(provider, toolDefinitions, active.signal, onToken), execute, signal: active.signal,
           onEvent: (name, info) => {
             if (info === undefined) { console.error(`  ${toolLine(name)}`); }
             else { console.error(`  ${toolLine(name, info)}`); }

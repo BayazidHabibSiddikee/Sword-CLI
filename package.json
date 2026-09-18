@@ -1,7 +1,24 @@
 {
-  "name": "characters-launcher",
+  "name": "swordcli",
+  "version": "0.1.0",
   "private": true,
+  "type": "module",
+  "bin": {
+    "sword": "./bin/sword"
+  },
   "scripts": {
-    "sword": "node character-flow/character-flow/cli/flow.js --shared"
+    "sword": "node bin/sword --shared",
+    "sword:local": "node bin/sword --local",
+    "dev:web": "node character-flow/character-flow/server.js",
+    "dev:freellmapi": "cd freellmapi && npm run dev",
+    "dev": "npm run dev:freellmapi & sleep 2 && npm run dev:web",
+    "build:web": "cd character-flow/character-flow/web && npm run build",
+    "setup": "npm install && cd character-flow/character-flow && npm install && cd ../freellmapi && npm install"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "chalk": "^5.3.0",
+    "g4f": "^1.0.0",
+    "ora": "^8.0.0"
   }
 }

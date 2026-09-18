@@ -20,7 +20,7 @@ function g4f() {
 
 /** The single user-visible notice printed when the fallback engages. */
 export function fallbackNotice() {
-  return '[Fallback] Primary provider failed, using g4f for anonymous response...';
+  return '[Fallback] Primary provider failed, using g4f (free) as provider...';
 }
 
 /**
@@ -30,8 +30,13 @@ export function fallbackNotice() {
  */
 export async function attemptFallback(prompt) {
   if (typeof prompt !== 'string' || !prompt.trim()) throw new Error('Fallback prompt must not be empty');
-  const result = await g4f().chatCompletion([{ role: 'user', content: prompt }]);
-  const text = typeof result === 'string' ? result : result?.content ?? result?.text ?? result?.message?.content ?? '';
-  if (typeof text !== 'string' || !text.trim()) throw new Error('Fallback provider returned no text');
-  return text;
+  try {
+    const result = await g4f().chatCompletion([{ role: 'user', content: prompt }]);
+    const text = typeof result === 'string' ? result : result?.content ?? result?.text ?? result?.message?.content ?? '';
+    if (typeof text === 'string' && text.trim()) return text;
+  } catch (e) {
+    // g4f provider failed, provide a helpful offline response
+  }
+  // Offline fallback - provide a useful response without external API
+  return `[SwordCLI Offline Mode]\n\nYour prompt: "${prompt}"\n\nNo external LLM provider is available (freellmapi backend not running, g4f providers unreachable).\n\nTo enable full AI capabilities:\n1. Start freellmapi: \`cd freellmapi && npm run dev\` (port 3001)\n2. Or set OPENAI_BASE_URL and OPENAI_API_KEY to your provider\n3. Or set SWORDCLI_BASE_URL and SWORDCLI_TOKEN for a remote freellmapi\n\nYou can still use local tools (file read/write, command execution, search) in the meantime.`;
 }
