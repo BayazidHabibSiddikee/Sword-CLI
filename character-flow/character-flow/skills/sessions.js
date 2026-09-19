@@ -47,13 +47,13 @@ export class SessionManager {
   persist(charKey, userInput, agentResult) {
     const session = this.load(charKey);
     session.conversation.push({
-      type: 'human',
+      role: 'user',
       content: userInput,
       timestamp: new Date().toISOString(),
     });
     if (agentResult) {
       session.conversation.push({
-        type: 'ai',
+        role: 'assistant',
         content: agentResult.response,
         turns: agentResult.turns,
         hasToolCalls: agentResult.hasToolCalls,
@@ -73,7 +73,7 @@ export class SessionManager {
     const msgs = session.conversation.slice(-20);
     let text = `Previous conversation history:\n`;
     for (const m of msgs) {
-      const prefix = m.type === 'human' ? 'USER' : 'ASSISTANT';
+      const prefix = m.role === 'user' ? 'USER' : 'ASSISTANT';
       text += `\n[${prefix}] ${m.content?.slice(0, maxTokens)}\n`;
     }
     return text;

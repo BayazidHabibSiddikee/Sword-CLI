@@ -48,6 +48,7 @@ export function createApp() {
   // ── API routes (minimal set) ───────────────────────────────────────────────
   app.use('/api/keys', keysRouter);
   app.use('/api/models', modelsRouter);
+  app.use('/api/providers', providersRouter);
   app.use('/api/analytics', analyticsRouter);
   app.use('/api/health', healthRouter);
   app.use('/api/settings', settingsRouter);

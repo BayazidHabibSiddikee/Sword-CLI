@@ -5,7 +5,7 @@
  */
 import readline from 'readline';
 import chalk from 'chalk';
-import { LangGraphAgent } from './langgraph-agent.js';
+import { LangGraphAgent } from '../character-flow/langgraph-agent.js';
 import * as bridge from './skills/bridge.js';
 import * as gitSkill from './skills/git.js';
 import * as fileEditSkill from './skills/file_edit.js';
@@ -389,6 +389,56 @@ async function handleCommand(input) {
       console.log(dim('\n')); return null;
     }
     console.log(dim('   /tasks add <title> | /tasks list | /tasks done <id> | /tasks stats\n'));
+    return null;
+  }
+
+  if (cmd === '/models' || cmd === '/providers') {
+    console.log(dim(`\n   🔌 Providers:\n`));
+    console.log(dim('     local   http://127.0.0.1:3001/v1'));
+    console.log(dim('     g4f     anonymous fallback provider'));
+    console.log(dim('     remote  SWORDCLI_BASE_URL / OPENAI_BASE_URL'));
+    console.log(dim(`\n   🤖 Models:\n`));
+    for (const m of MODELS) {
+      const isActive = m === currentModel ? green(' ✓') : '   ';
+      console.log(accent(currentModel === m ? '#FFD700' : '#888')(`     ${m}${isActive}`));
+    }
+    console.log(dim('\n   Usage: /model <name>\n'));
+    return null;
+  }
+
+  if (cmd === '/rag') {
+    const sub = (parts[1] || '').toLowerCase();
+    if (sub === 'add' && args) {
+      const target = parts.slice(2).join(' ').trim();
+      if (!target) { console.log(red('   Usage: /rag add <path|url>')); return null; }
+      const r = await bridge.execute('save_to_rag', { source: target, content: target });
+      console.log(green(`   ✓ Added to RAG: ${target}`));
+      return null;
+    }
+    if (sub === 'search' && args) {
+      const query = parts.slice(2).join(' ').trim();
+      if (!query) { console.log(red('   Usage: /rag search <query>')); return null; }
+      const r = await bridge.execute('save_to_rag', { source: `search:${query}`, content: query });
+      console.log(green(`   ✓ RAG search queued: ${query}`));
+      return null;
+    }
+    console.log(dim('   /rag add <path|url> | /rag search <query>\n'));
+    return null;
+  }
+
+  if (cmd === '/download' && args) {
+    const url = parts[1];
+    if (!url) { console.log(red('   Usage: /download <url>')); return null; }
+    const r = await bridge.execute('fetch_web', { url });
+    console.log(green(`   ✓ Downloaded: ${url}`));
+    return null;
+  }
+
+  if ((cmd === '/web' || cmd === '/scrape') && args) {
+    const url = parts[1];
+    if (!url) { console.log(red('   Usage: /web <url>')); return null; }
+    const r = await bridge.execute('fetch_web', { url });
+    console.log(green(`   ✓ Fetched: ${url}`));
     return null;
   }
 
