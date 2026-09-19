@@ -9,11 +9,11 @@
   "scripts": {
     "sword": "node bin/sword --shared",
     "sword:local": "node bin/sword --local",
-    "dev:web": "node character-flow/character-flow/server.js",
-    "dev:freellmapi": "cd freellmapi && npm run dev",
+    "dev:web": "node character-flow/character-flow/character-flow/server.js",
+    "dev:freellmapi": "cd character-flow/character-flow/freellmapi/server && npm run dev",
     "dev": "npm run dev:freellmapi & sleep 2 && npm run dev:web",
     "build:web": "cd character-flow/character-flow/web && npm run build",
-    "setup": "npm install && cd character-flow/character-flow && npm install && cd ../freellmapi && npm install"
+    "setup": "npm install && cd character-flow/character-flow && npm install && cd freellmapi/server && npm install"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",
