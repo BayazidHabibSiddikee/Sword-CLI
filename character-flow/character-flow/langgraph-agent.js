@@ -14,8 +14,8 @@ import {
 } from '@langchain/langgraph';
 import { HumanMessage, AIMessage, ToolMessage, SystemMessage } from '@langchain/core/messages';
 
-const OPENAI_BASE_URL = (process.env.OPENAI_BASE_URL || 'http://localhost:3001/v1').replace(/\/+$/, '').replace(/\/v1$/, '');
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
+const DEFAULT_OPENAI_BASE_URL = (process.env.OPENAI_BASE_URL || 'http://localhost:3001/v1').replace(/\/+$/, '').replace(/\/v1$/, '');
+const DEFAULT_OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 
 // ── LLM Node ──────────────────────────────────────────────────────────────────
 async function llmNode(state, config) {
@@ -24,16 +24,22 @@ async function llmNode(state, config) {
   const tools = config?.configurable?.tools || [];
   const modelName = config?.configurable?.model_name || 'auto';
   const maxTokens = config?.configurable?.max_tokens || 4096;
+  const provider = config?.configurable?.provider;
 
   const allMessages = sysPrompt
     ? [new SystemMessage(sysPrompt), ...msgs]
     : [...msgs];
 
+  const baseURL = provider?.url
+    ? `${provider.url.replace(/\/+$/, '')}/v1`
+    : `${DEFAULT_OPENAI_BASE_URL}/v1`;
+  const apiKey = provider?.key || DEFAULT_OPENAI_API_KEY || undefined;
+
   const llm = new ChatOpenAI({
     modelName,
     configuration: {
-      baseURL: `${OPENAI_BASE_URL}/v1`,
-      apiKey: OPENAI_API_KEY || undefined,
+      baseURL,
+      apiKey,
     },
     temperature: 0.7,
     maxTokens,
@@ -97,12 +103,13 @@ export function buildAgent(config = {}) {
     modelName = 'auto',
     maxTokens = 4096,
     toolExecutor = null,
+    provider = null,
   } = config;
 
   const graph = new StateGraph(MessagesAnnotation)
     .addNode('llm', (state, cfg) => llmNode(state, {
       ...cfg,
-      configurable: { ...cfg?.configurable, system_prompt: systemPrompt, tools, model_name: modelName, max_tokens: maxTokens, tool_executor: toolExecutor },
+      configurable: { ...cfg?.configurable, system_prompt: systemPrompt, tools, model_name: modelName, max_tokens: maxTokens, tool_executor: toolExecutor, provider },
     }))
     .addNode('tools', (state, cfg) => toolNode(state, {
       ...cfg,
@@ -124,13 +131,15 @@ export class LangGraphAgent {
       modelName: options.modelName || 'auto',
       maxTokens: options.maxTokens || 4096,
       toolExecutor: options.toolExecutor || null,
+      provider: options.provider || null,
     });
     this.characterName = options.characterName || 'agent';
     this.threadId = options.threadId || 'default';
+    this.provider = options.provider || null;
   }
 
   getConfig() {
-    return { configurable: { thread_id: this.threadId } };
+    return { configurable: { thread_id: this.threadId, provider: this.provider } };
   }
 
   /** Run one turn — blocks until final text response */

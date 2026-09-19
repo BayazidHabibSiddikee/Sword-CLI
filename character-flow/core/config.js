@@ -7,7 +7,7 @@
  *      `freellmapi/server/data/freeapi.db` in `cli/backend.js`
  */
 
-const SWORD_DATA_DIR = '/home/sword/Documents/Characters/freellmapi/server/data';
+const SWORD_DATA_DIR = '/home/sword/Documents/Characters/character-flow/character-flow/freellmapi/server/data';
 
 export const CONFIG = {
   /** Base URL of the freellmapi OpenAI-compatible proxy. */

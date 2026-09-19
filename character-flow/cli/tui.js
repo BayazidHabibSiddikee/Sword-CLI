@@ -73,6 +73,7 @@ let teamMembers   = [];
 const agents      = {};
 const commandHistory = [];
 let historyIndex  = -1;
+let customProvider = null;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 async function getAgent(charKey) {
@@ -102,6 +103,7 @@ async function getAgent(charKey) {
     tools: allTools,
     characterName: char.name,
     modelName: currentModel,
+    provider: customProvider,
     toolExecutor: async (name, args) => {
       // Route to appropriate executor based on tool name prefix
       if (skillRegistry.git && name.startsWith('git_')) {
@@ -229,28 +231,76 @@ async function handleCommand(input) {
   }
 
   if (cmd === '/model' || cmd === '/m') {
-    const target = (args || '').toLowerCase();
+    const target = (args || '').trim();
     if (!target) {
       console.log(dim('\n   🤖 Models:\n'));
       for (const m of MODELS) {
         const isActive = m === currentModel ? green(' ✓') : '   ';
         console.log(accent(currentModel === m ? '#FFD700' : '#888')(`   ${m}${isActive}`));
       }
-      console.log(dim('\n   Usage: /model <name>\n'));
+      const { listProviders } = await import('./providers.js');
+      const all = listProviders().filter(p => p.model);
+      if (all.length) {
+        console.log(dim('\n   Custom provider models:\n'));
+        for (const p of all) console.log(accent('#61AFEF')(`   ${p.model} (${p.name})${p.model === currentModel ? green(' ✓') : '   '}`));
+      }
+      console.log(dim('\n   Usage: /model <name> | /provider add <name> <baseUrl> <apiKey> <model>\n'));
       return null;
     }
-    if (!MODELS.includes(target)) { console.log(red(`   Unknown model: "${target}"`)); return null; }
+    const { listProviders } = await import('./providers.js');
+    const custom = listProviders().find(p => p.model && p.model.toLowerCase() === target.toLowerCase());
+    if (custom) {
+      customProvider = { url: custom.baseUrl, key: custom.apiKey };
+      currentModel = custom.model;
+      Object.keys(agents).forEach(k => delete agents[k]);
+      console.log(green(`   ✓ Switched to custom provider: ${custom.name} (${currentModel})\n`));
+      return null;
+    }
+    if (!MODELS.map(m => m.toLowerCase()).includes(target.toLowerCase())) {
+      console.log(red(`   Unknown model: "${target}"\n`));
+      return null;
+    }
+    customProvider = null;
     currentModel = target;
     Object.keys(agents).forEach(k => delete agents[k]);
     console.log(dim(`   ✓ Model: ${currentModel}\n`));
     return null;
   }
 
-  if (cmd === '/models' || cmd === '/providers') {
-    console.log(dim(`\n   🔌 Providers:\n`));
-    console.log(dim('     local   http://127.0.0.1:3001/v1'));
-    console.log(dim('     g4f     anonymous fallback provider'));
-    console.log(dim('     remote  SWORDCLI_BASE_URL / OPENAI_BASE_URL'));
+  if (cmd === '/provider' || cmd === '/providers') {
+    const sub = (parts[1] || '').toLowerCase();
+    const { listProviders, addProvider, removeProvider } = await import('./providers.js');
+    if (sub === 'list' || sub === 'ls' || !sub) {
+      const all = listProviders();
+      console.log(dim(`\n   🔌 Providers:\n`));
+      console.log(dim('     local   http://127.0.0.1:3001/v1'));
+      console.log(dim('     g4f     anonymous fallback provider'));
+      console.log(dim('     remote  SWORDCLI_BASE_URL / OPENAI_BASE_URL'));
+      if (all.length) {
+        for (const p of all) console.log(accent('#61AFEF')(`     custom   ${p.name} -> ${p.baseUrl} (model: ${p.model || 'default'})`));
+      }
+      console.log(dim('\n   Usage: /provider add <name> <baseUrl> <apiKey> <model>\n         /provider remove <id>\n'));
+      return null;
+    }
+    if (sub === 'add' && parts[1] && parts[2] && parts[3]) {
+      const name = parts[1];
+      const baseUrl = parts[2];
+      const apiKey = parts[3];
+      const model = parts[4] || '';
+      addProvider({ name, baseUrl, apiKey, model });
+      console.log(green(`   ✓ Provider added: ${name}`));
+      return null;
+    }
+    if (sub === 'remove' && parts[1]) {
+      removeProvider(parts[1]);
+      console.log(green(`   ✓ Provider removed`));
+      return null;
+    }
+    console.log(red('   Usage: /provider list | add <name> <baseUrl> <apiKey> <model> | remove <id>\n'));
+    return null;
+  }
+
+  if (cmd === '/models') {
     console.log(dim(`\n   🤖 Models:\n`));
     for (const m of MODELS) {
       const isActive = m === currentModel ? green(' ✓') : '   ';
@@ -406,20 +456,6 @@ async function handleCommand(input) {
     return null;
   }
 
-  if (cmd === '/models' || cmd === '/providers') {
-    console.log(dim(`\n   🔌 Providers:\n`));
-    console.log(dim('     local   http://127.0.0.1:3001/v1'));
-    console.log(dim('     g4f     anonymous fallback provider'));
-    console.log(dim('     remote  SWORDCLI_BASE_URL / OPENAI_BASE_URL'));
-    console.log(dim(`\n   🤖 Models:\n`));
-    for (const m of MODELS) {
-      const isActive = m === currentModel ? green(' ✓') : '   ';
-      console.log(accent(currentModel === m ? '#FFD700' : '#888')(`     ${m}${isActive}`));
-    }
-    console.log(dim('\n   Usage: /model <name>\n'));
-    return null;
-  }
-
   if (cmd === '/rag') {
     const sub = (parts[1] || '').toLowerCase();
     if (sub === 'add' && args) {
@@ -452,9 +488,14 @@ async function handleCommand(input) {
   if ((cmd === '/web' || cmd === '/scrape') && args) {
     const url = parts[1];
     if (!url) { console.log(red('   Usage: /web <url>')); return null; }
-    const r = await bridge.execute('fetch_web', { url });
-    console.log(green(`   ✓ Fetched: ${url}`));
-    if (typeof r === 'string') console.log(dim(r.slice(0, 400)));
+    try {
+      const { fetchWebRendered } = await import('./webFetch.js');
+      const payload = await fetchWebRendered(url, { maxChars: 12000 });
+      console.log(green(`   ✓ Fetched: ${payload.title || url}`));
+      console.log(dim(payload.markdown.slice(0, 2000)));
+    } catch (e) {
+      console.log(red(`   ✗ ${e instanceof Error ? e.message : e}`));
+    }
     return null;
   }
 

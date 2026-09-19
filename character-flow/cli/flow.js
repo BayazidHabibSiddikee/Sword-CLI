@@ -13,6 +13,7 @@ import { createSharedClient, recentContext } from './shared.js';
 import { resolveModel } from './model.js';
 import { RagEngine } from '../brain/rag.js';
 import { sessions } from '../skills/sessions.js';
+import { listProviders } from './providers.js';
 import { G4F } from 'g4f';
 import {
   cancelMessage, timeoutMessage, toolLine, friendlyError,
@@ -25,6 +26,15 @@ const __dirname = import.meta.dirname; // Node ≥20.6; safe in this project
 const ragDb = new RagEngine(join(__dirname, 'brain', 'rag.db'));
 let localSessionHistory = [];   // messages loaded from --session file at startup
 
+// ── Custom providers ───────────────────────────────────────────────────────────
+async function resolveCustomProvider(modelHint, fallbackOnly) {
+  const custom = listProviders();
+  if (!custom.length) return null;
+  const match = modelHint ? custom.find(p => p.model && p.model.toLowerCase() === String(modelHint).toLowerCase()) || custom[custom.length - 1] : custom[custom.length - 1];
+  if (!match) return null;
+  return { url: match.baseUrl, key: match.apiKey, model: match.model || 'auto' };
+}
+
 // ── g4f direct request (no backend needed) ────────────────────────────────────
 let g4fClient = null;
 function createG4fRequest(tools, signal, onToken) {
@@ -35,8 +45,7 @@ function createG4fRequest(tools, signal, onToken) {
       role: m.role === 'tool' ? 'assistant' : m.role,
       content: m.content || (m.tool_calls ? '[Tool call results omitted]' : '')
     })).filter(m => m.content);
-    const result = await g4fClient.chatCompletion({
-      messages: plainMessages,
+    const result = await g4fClient.chatCompletion(plainMessages, {
       model: 'gpt-4o-mini',
     });
     const text = typeof result === 'string' ? result : result?.content ?? result?.text ?? result?.message?.content ?? '';
@@ -102,7 +111,8 @@ async function main() {
   if (useG4f && interactive) console.error('[SwordCLI] No Sword backend detected — using g4f (free) as provider.\n');
   const useShared = !values.local && !useG4f && (values.shared || Boolean(values['shared-session']));
   if ((useShared && values.session) || (values['import-session'] && (!values.shared || values['shared-session']))) throw new Error('Use --import-session NAME with --shared to copy a local session, not --session');
-  const config = useG4f ? { url: '', key: '', model: 'auto' } : providerConfig(swordEnv);
+  const customProvider = await resolveCustomProvider(values.model, useG4f);
+  const config = useG4f ? { url: '', key: '', model: 'auto' } : (customProvider || providerConfig(swordEnv));
   // Prefer a strong tool-capable model over the backend's balanced auto-routing.
   const selectedModel = useG4f ? 'auto' : await resolveModel(config, values.model);
   const client = useShared ? createSharedClient(config) : null;
@@ -332,8 +342,33 @@ async function main() {
         console.error('Conversation cleared.');
         continue;
       }
-      if (line === '/providers' || line === '/models') {
-        console.error(`\nProviders:\n  local   ${config.url || 'http://127.0.0.1:3001/v1'}\n  g4f     anonymous fallback\n  remote  SWORDCLI_BASE_URL / OPENAI_BASE_URL\n\nModels:\n  current: ${provider.model}\n  config: --model, SWORD_MODEL, or backend auto-routing\n`);
+      if (line === '/providers' || line === '/provider') {
+        const sub = parts[1] || '';
+        const { listProviders, addProvider, removeProvider } = await import('./providers.js');
+        if (!sub || sub === 'list' || sub === 'ls') {
+          const custom = listProviders();
+          console.error(`\nProviders:\n  local   ${config.url || 'http://127.0.0.1:3001/v1'}\n  g4f     anonymous fallback\n  remote  SWORDCLI_BASE_URL / OPENAI_BASE_URL`);
+          if (custom.length) {
+            for (const p of custom) console.error(`  custom  ${p.name} -> ${p.baseUrl} (model: ${p.model || 'default'})`);
+          }
+          console.error(`\nModels:\n  current: ${provider.model}\n  config: --model, SWORD_MODEL, or backend auto-routing\n\nUsage: /provider add <name> <baseUrl> <apiKey> <model>\n       /provider remove <id>\n`);
+        } else if (sub === 'add' && parts[1] && parts[2] && parts[3]) {
+          const name = parts[1];
+          const baseUrl = parts[2];
+          const apiKey = parts[3];
+          const model = parts[4] || '';
+          addProvider({ name, baseUrl, apiKey, model });
+          console.error(`Provider added: ${name}`);
+        } else if (sub === 'remove' && parts[1]) {
+          removeProvider(parts[1]);
+          console.error(`Provider removed`);
+        } else {
+          console.error('Usage: /provider list | add <name> <baseUrl> <apiKey> <model> | remove <id>');
+        }
+        continue;
+      }
+      if (line === '/models') {
+        console.error(`\nModels:\n  current: ${provider.model}\n  config: --model, SWORD_MODEL, or backend auto-routing\n`);
         continue;
       }
       if (line.startsWith('/rag ')) {
@@ -345,8 +380,16 @@ async function main() {
         }
         continue;
       }
-      if (line.startsWith('/download ') || line.startsWith('/web ')) {
-        console.error('Use a normal prompt and approve the fetch_web tool call for this action.');
+      if (line.startsWith('/download ') || line.startsWith('/web ') || line.startsWith('/scrape ')) {
+        const target = line.split(/\s+/)[1];
+        if (!target) { console.error('Usage: /web|/scrape|/download <url>'); continue; }
+        try {
+          const { fetchWebRendered } = await import('./webFetch.js');
+          const payload = await fetchWebRendered(target, { maxChars: 12000 });
+          console.error(`\n[web] ${payload.title || target} (${payload.chars} chars)\n${payload.markdown.slice(0, 2000)}\n`);
+        } catch (e) {
+          console.error(`Web fetch failed: ${e instanceof Error ? e.message : e}`);
+        }
         continue;
       }
       if (line.startsWith('/')) {
