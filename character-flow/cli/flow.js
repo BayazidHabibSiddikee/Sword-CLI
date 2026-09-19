@@ -332,6 +332,23 @@ async function main() {
         console.error('Conversation cleared.');
         continue;
       }
+      if (line === '/providers' || line === '/models') {
+        console.error(`\nProviders:\n  local   ${config.url || 'http://127.0.0.1:3001/v1'}\n  g4f     anonymous fallback\n  remote  SWORDCLI_BASE_URL / OPENAI_BASE_URL\n\nModels:\n  current: ${provider.model}\n  config: --model, SWORD_MODEL, or backend auto-routing\n`);
+        continue;
+      }
+      if (line.startsWith('/rag ')) {
+        const sub = line.split(/\s+/)[1];
+        if (sub === 'add' || sub === 'search') {
+          console.error(`RAG ${sub} is available via tool approval in turns. Use a normal prompt and approve the tool call.`);
+        } else {
+          console.error('Usage: /rag add|search <query-or-path>');
+        }
+        continue;
+      }
+      if (line.startsWith('/download ') || line.startsWith('/web ')) {
+        console.error('Use a normal prompt and approve the fetch_web tool call for this action.');
+        continue;
+      }
       if (line.startsWith('/')) {
         const suggest = closestCommand(line);
         if (suggest) console.error(`Unknown command. Did you mean /${suggest}? Use /help.`);

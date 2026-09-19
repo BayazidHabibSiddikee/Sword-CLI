@@ -246,6 +246,20 @@ async function handleCommand(input) {
     return null;
   }
 
+  if (cmd === '/models' || cmd === '/providers') {
+    console.log(dim(`\n   🔌 Providers:\n`));
+    console.log(dim('     local   http://127.0.0.1:3001/v1'));
+    console.log(dim('     g4f     anonymous fallback provider'));
+    console.log(dim('     remote  SWORDCLI_BASE_URL / OPENAI_BASE_URL'));
+    console.log(dim(`\n   🤖 Models:\n`));
+    for (const m of MODELS) {
+      const isActive = m === currentModel ? green(' ✓') : '   ';
+      console.log(accent(currentModel === m ? '#FFD700' : '#888')(`     ${m}${isActive}`));
+    }
+    console.log(dim('\n   Usage: /model <name>\n'));
+    return null;
+  }
+
   if (cmd === '/team') {
     if (!args) {
       teamMode = !teamMode;
@@ -431,6 +445,7 @@ async function handleCommand(input) {
     if (!url) { console.log(red('   Usage: /download <url>')); return null; }
     const r = await bridge.execute('fetch_web', { url });
     console.log(green(`   ✓ Downloaded: ${url}`));
+    if (typeof r === 'string') console.log(dim(r.slice(0, 400)));
     return null;
   }
 
@@ -439,6 +454,7 @@ async function handleCommand(input) {
     if (!url) { console.log(red('   Usage: /web <url>')); return null; }
     const r = await bridge.execute('fetch_web', { url });
     console.log(green(`   ✓ Fetched: ${url}`));
+    if (typeof r === 'string') console.log(dim(r.slice(0, 400)));
     return null;
   }
 
