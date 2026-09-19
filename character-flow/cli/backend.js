@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
-function readLocalUnifiedKey() {
+export function readLocalUnifiedKey() {
   const require = createRequire(new URL('../../freellmapi/server/package.json', import.meta.url));
   let db;
   try {
@@ -9,13 +9,17 @@ function readLocalUnifiedKey() {
     db = new Database(fileURLToPath(new URL('../../freellmapi/server/data/freeapi.db', import.meta.url)), {
       readonly: true, fileMustExist: true
     });
-    return db.prepare("SELECT value FROM settings WHERE key = 'unified_api_key'").get()?.value;
-  } catch {
-    return null; // Backend not running — will fall back to g4f
+    const value = db.prepare("SELECT value FROM settings WHERE key = 'unified_api_key'").get()?.value;
+    if (typeof value === 'string' && value.trim()) return value;
+    return null;
+  } catch (err) {
+    console.error(`[backend] Could not read local unified key; falling back to g4f. (${err?.message ?? err})`);
+    return null;
   } finally { db?.close(); }
 }
 
-export async function configureSwordBackend(env, readKey = readLocalUnifiedKey) {
+export async function configureSwordBackend(env, readKey = readLocalUnifiedKey, opts = {}) {
+  const allowSilentFallback = opts.allowSilentFallback === true;
   // Preserve intentionally configured providers, including test/mock endpoints.
   if (!env.SWORDCLI_BASE_URL && (env.OPENAI_BASE_URL || env.PROXY_HOST)) return { ...env };
   const base = new URL(env.SWORDCLI_BASE_URL || 'http://127.0.0.1:3001/v1');
@@ -26,8 +30,8 @@ export async function configureSwordBackend(env, readKey = readLocalUnifiedKey) 
   if (!localBackend && base.protocol !== 'https:') throw new Error('Remote backends require HTTPS');
   const key = env.SWORDCLI_TOKEN || await readKey();
   if (typeof key !== 'string' || !key.trim()) {
-    // No backend available — signal to use g4f fallback
-    return { ...env, _swordG4fFallback: true };
+    if (allowSilentFallback) return { ...env, _swordG4fFallback: true };
+    throw new Error('Missing unified API key: start the local Sword backend or set OPENAI_BASE_URL/OPENAI_API_KEY/SWORDCLI_BASE_URL/SWORDCLI_TOKEN.');
   }
   const url = base.href.replace(/\/+$/, '');
   return { ...env, OPENAI_BASE_URL: url.endsWith('/v1') ? url : `${url}/v1`, OPENAI_API_KEY: key };

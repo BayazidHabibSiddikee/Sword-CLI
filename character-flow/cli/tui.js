@@ -1,6 +1,16 @@
 #!/usr/bin/env node
-console.error('[DEPRECATED] Use `bin/sword` instead. The legacy character-flow/character-flow/tui.js is no longer supported.');
-process.exit(1);
+/**
+ * tui.js — Unified Character Flow TUI (Opencode-style replacement)
+ * Features: persistent sessions, auto-discovered skills, git ops, file editing, task tracking
+ */
+import readline from 'readline';
+import chalk from 'chalk';
+import { LangGraphAgent } from './langgraph-agent.js';
+import * as bridge from './skills/bridge.js';
+import * as gitSkill from './skills/git.js';
+import * as fileEditSkill from './skills/file_edit.js';
+import * as tasksSkill from './skills/tasks.js';
+import { sessions } from './skills/sessions.js';
 
 // ── Colors ────────────────────────────────────────────────────────────────────
 const yellow   = chalk.hex('#FFD700');
@@ -97,10 +107,10 @@ async function getAgent(charKey) {
       if (skillRegistry.git && name.startsWith('git_')) {
         return await skillRegistry.git.execute(name, args);
       }
-      if (skillRegistry.file_edit && name.startsWith('search_replace') || name.startsWith('insert_') || name.startsWith('append_file') || name.startsWith('replace_block') || name.startsWith('create_dir') || name.startsWith('delete_file') || name.startsWith('grep_search') || name.startsWith('count_lines')) {
+      if (skillRegistry.file_edit && (name.startsWith('search_replace') || name.startsWith('insert_') || name.startsWith('append_file') || name.startsWith('replace_block') || name.startsWith('create_dir') || name.startsWith('delete_file') || name.startsWith('grep_search') || name.startsWith('count_lines'))) {
         return await fileEditSkill.execute(name, args);
       }
-      if (skillRegistry.tasks && name.startsWith('add_task') || name.startsWith('list_tasks') || name.startsWith('update_task') || name.startsWith('delete_task') || name.startsWith('stats_tasks')) {
+      if (skillRegistry.tasks && (name.startsWith('add_task') || name.startsWith('list_tasks') || name.startsWith('update_task') || name.startsWith('delete_task') || name.startsWith('stats_tasks'))) {
         return await tasksSkill.execute(name, args);
       }
       if (char.agentSkills) {

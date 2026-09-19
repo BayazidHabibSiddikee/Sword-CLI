@@ -8,7 +8,7 @@ import { providerConfig, createRequest, runTurn, loadSession, saveSession } from
 import { attemptFallback, fallbackNotice } from './providerFallback.js';
 import { createTools, toolDefinitions } from './tools.js';
 import { buildSystemPrompt, buildMemoryBlock } from './prompts.js';
-import { configureSwordBackend } from './backend.js';
+import { configureSwordBackend, readLocalUnifiedKey } from './backend.js';
 import { createSharedClient, recentContext } from './shared.js';
 import { resolveModel } from './model.js';
 import { RagEngine } from '../brain/rag.js';
@@ -89,9 +89,17 @@ async function main() {
   if (!(await stat(cwd)).isDirectory()) throw new Error('--cwd must be a directory');
   if (values.local && (values['shared-session'] || values['import-session'])) throw new Error('--local cannot be combined with shared-session or import-session');
   if (values.local && values.shared) throw new Error('--local and --shared are mutually exclusive; choose one session mode');
-  const swordEnv = await configureSwordBackend(process.env);
-  const useG4f = swordEnv._swordG4fFallback === true;
-  if (useG4f && interactive) console.error('[SwordCLI] No freellmapi backend detected — using g4f (free) as provider.\n');
+  let swordEnv;
+  let useG4f = false;
+  try {
+    swordEnv = await configureSwordBackend(process.env, readLocalUnifiedKey, { allowSilentFallback: true });
+    useG4f = swordEnv._swordG4fFallback === true;
+  } catch (err) {
+    if (!interactive) throw err;
+    useG4f = true;
+    swordEnv = { ...process.env, _swordG4fFallback: true };
+  }
+  if (useG4f && interactive) console.error('[SwordCLI] No Sword backend detected — using g4f (free) as provider.\n');
   const useShared = !values.local && !useG4f && (values.shared || Boolean(values['shared-session']));
   if ((useShared && values.session) || (values['import-session'] && (!values.shared || values['shared-session']))) throw new Error('Use --import-session NAME with --shared to copy a local session, not --session');
   const config = useG4f ? { url: '', key: '', model: 'auto' } : providerConfig(swordEnv);

@@ -3,11 +3,11 @@
  *
  * Resolves the API key WITHOUT hardcoding it:
  *   1. env OPENAI_API_KEY
- *   2. FREELLMAPI_KEY from /home/sword/Documents/Characters/freellmapi/.env
- *      (file format: KEY=VALUE lines, '#' comments and blank lines ignored)
+ *   2. CLI reads the local Sword backend unified key from
+ *      `freellmapi/server/data/freeapi.db` in `cli/backend.js`
  */
 
-const FREELLM_ENV_PATH = '/home/sword/Documents/Characters/freellmapi/.env';
+const SWORD_DATA_DIR = '/home/sword/Documents/Characters/freellmapi/server/data';
 
 export const CONFIG = {
   /** Base URL of the freellmapi OpenAI-compatible proxy. */
@@ -76,21 +76,13 @@ export function parseEnvFile(text) {
 
 /**
  * Async — resolve the proxy API key.
- * Priority: env OPENAI_API_KEY, else FREELLMAPI_KEY from the freellmapi .env file.
+ * Priority: env OPENAI_API_KEY. The local unified key is read from the
+ * backend SQLite DB by `cli/backend.js`; this module does not duplicate
+ * that behavior.
  * @returns {Promise<string|null>} resolved key, or null if none found.
  */
 export async function loadConfig() {
   const envKey = process.env.OPENAI_API_KEY?.trim();
   if (envKey) return envKey;
-
-  try {
-    const { readFile } = await import('node:fs/promises');
-    const raw = await readFile(FREELLM_ENV_PATH, 'utf8');
-    const parsed = parseEnvFile(raw);
-    const key = parsed.FREELLMAPI_KEY?.trim();
-    if (key) return key;
-  } catch (err) {
-    console.error(`[config] Could not read ${FREELLM_ENV_PATH}: ${err?.message ?? err}`);
-  }
   return null;
 }
