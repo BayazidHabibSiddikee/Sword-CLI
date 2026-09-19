@@ -16,7 +16,7 @@ import { sessions } from './skills/sessions.js';
 
 const PORT = parseInt(process.env.PORT || '3002');
 const PROXY_BASE = process.env.PROXY_HOST || 'http://localhost:3001';
-const FREELLMAPI_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'freellmapi');
+const FREELLMAPI_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'GET_API');
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // ── Character Registry ────────────────────────────────────────────────────────

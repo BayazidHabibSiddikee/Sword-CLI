@@ -1,7 +1,7 @@
 /**
  * core/llm.js — unified chat entry point.
  *
- * Tries the freellmapi OpenAI-compatible proxy first
+ * Tries the local Sword backend OpenAI-compatible proxy first
  * (POST ${CONFIG.proxyBase}/chat/completions with Bearer auth). On ANY failure
  * — network error, non-200 status, malformed body — falls back to g4f so the
  * CLI always produces a reply. Never throws when g4f succeeds.

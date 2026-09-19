@@ -2,11 +2,11 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 export function readLocalUnifiedKey() {
-  const require = createRequire(new URL('../../freellmapi/server/package.json', import.meta.url));
+  const require = createRequire(new URL('../../GET_API/server/package.json', import.meta.url));
   let db;
   try {
     const Database = require('better-sqlite3');
-    db = new Database(fileURLToPath(new URL('../../freellmapi/server/data/freeapi.db', import.meta.url)), {
+    db = new Database(fileURLToPath(new URL('../../GET_API/server/data/freeapi.db', import.meta.url)), {
       readonly: true, fileMustExist: true
     });
     const value = db.prepare("SELECT value FROM settings WHERE key = 'unified_api_key'").get()?.value;

@@ -71,7 +71,7 @@ Usage: sword [--cwd DIRECTORY] [--prompt TEXT] [--json] [--session NAME]
   --team         Round-robin team discussion: all 10 agents deliberate, then a writer responds
   --json         One-shot JSON output, diagnostics on stderr
   --help, -h     Show this help
-Interactive: /help /clear /status /team /exit
+Interactive: /help /clear /status /team /web /exit
 Every file edit and command requires explicit approval. Commands are NOT sandboxed.
 Configuration: OPENAI_BASE_URL, OPENAI_API_KEY, OPENAI_MODEL; PROXY_HOST fallback.
 Model choice: --model, else SWORD_MODEL, else the strongest model the backend
@@ -380,9 +380,20 @@ async function main() {
         }
         continue;
       }
-      if (line.startsWith('/download ') || line.startsWith('/web ') || line.startsWith('/scrape ')) {
+      if (line === '/web') {
+        const url = process.env.SWORD_WEB_URL || 'http://localhost:3002';
+        console.error(`Opening web portal: ${url}`);
+        try {
+          const { execCommand } = await import('./tools.js');
+          await execCommand(`open "${url}" || xdg-open "${url}" || start "${url}"`);
+        } catch {
+          console.error(`Open it manually: ${url}`);
+        }
+        continue;
+      }
+      if (line.startsWith('/download ') || line.startsWith('/scrape ')) {
         const target = line.split(/\s+/)[1];
-        if (!target) { console.error('Usage: /web|/scrape|/download <url>'); continue; }
+        if (!target) { console.error('Usage: /download|/scrape <url>'); continue; }
         try {
           const { fetchWebRendered } = await import('./webFetch.js');
           const payload = await fetchWebRendered(target, { maxChars: 12000 });

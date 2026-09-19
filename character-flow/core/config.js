@@ -4,13 +4,13 @@
  * Resolves the API key WITHOUT hardcoding it:
  *   1. env OPENAI_API_KEY
  *   2. CLI reads the local Sword backend unified key from
- *      `freellmapi/server/data/freeapi.db` in `cli/backend.js`
+ *      `GET_API/server/data/freeapi.db` in `cli/backend.js`
  */
 
-const SWORD_DATA_DIR = '/home/sword/Documents/Characters/character-flow/character-flow/freellmapi/server/data';
+const SWORD_DATA_DIR = '/home/sword/Documents/Characters/character-flow/character-flow/GET_API/server/data';
 
 export const CONFIG = {
-  /** Base URL of the freellmapi OpenAI-compatible proxy. */
+  /** Base URL of the local Sword backend OpenAI-compatible proxy. */
   proxyBase: 'http://localhost:3001/v1',
   /** Mutable runtime state shared by CLI, web server and agent. */
   state: {
