@@ -4,7 +4,7 @@ import { fallbackNotice, attemptFallback, setG4fFactory } from '../cli/providerF
 
 test('providerFallback uses g4f and validates prompts/results', async () => {
   assert.ok(fallbackNotice().startsWith('[Fallback]'));
-  assert.ok(fallbackNotice().includes('g4f'));
+  assert.ok(fallbackNotice().includes('free fallback providers'));
 
   for (const prompt of ['', '   ', '\t\n']) {
     await assert.rejects(attemptFallback(prompt), /Fallback prompt must not be empty/);
