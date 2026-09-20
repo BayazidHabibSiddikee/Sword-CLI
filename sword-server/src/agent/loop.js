@@ -54,6 +54,25 @@ function persist(sessionId, msg) {
   getDb().prepare("UPDATE sessions SET updated_at = datetime('now') WHERE id = ?").run(sessionId);
 }
 
+// Small local models sometimes answer in their own bespoke tool dialect — a
+// raw JSON array like [{"name":"read_file","arguments":{...}}] — instead of
+// using the tool_calls channel or plain text. Detect it so the loop can
+// self-correct instead of surfacing the blob to the client.
+const PSEUDO_TOOL_RE = /^\s*\[\s*\{\s*"name"\s*:/;
+function looksLikePseudoToolCall(text) {
+  if (typeof text !== 'string' || !PSEUDO_TOOL_RE.test(text)) return false;
+  try {
+    const arr = JSON.parse(text);
+    return Array.isArray(arr) && arr.length > 0 && arr.every(x =>
+      x && typeof x.name === 'string' && (x.arguments === undefined || (x.arguments && typeof x.arguments === 'object')));
+  } catch { return false; }
+}
+
+const TOOL_CHANNEL_NUDGE =
+  'Your previous reply was a raw JSON tool-call, which is not valid output here. ' +
+  'Either use one of the provided tools through the proper tool-call channel, or answer in plain natural language. ' +
+  'Never output JSON blobs as message text.';
+
 export async function runTurn({ sessionId, userMessage, model, signal, onEvent }) {
   const s = getDb().prepare('SELECT * FROM sessions WHERE id = ?').get(sessionId);
   if (!s) throw Object.assign(new Error('session not found'), { status: 404 });
@@ -65,7 +84,7 @@ export async function runTurn({ sessionId, userMessage, model, signal, onEvent }
     else if (m.role === 'tool') messages.push({ role: 'tool', tool_call_id: m.tool_call_id, content: m.content });
     else messages.push({ role: m.role, content: m.content });
   }
-  let turns = 0, toolCalls = 0, emptyRetries = 0;
+  let turns = 0, toolCalls = 0, emptyRetries = 0, pseudoRetries = 0, nudgeMsg = null;
   const maxTurns = 10;
   while (turns < maxTurns) {
     turns++;
@@ -73,7 +92,8 @@ export async function runTurn({ sessionId, userMessage, model, signal, onEvent }
     if (signal?.aborted) { onEvent?.({ type: 'error', error: 'aborted' }); return null; }
     let result;
     try {
-      result = await chat({ messages, tools: toolDefs, model: model || s.model || undefined, signal, onToken: d => onEvent?.({ type: 'token', delta: d }) });
+      result = await chat({ messages: nudgeMsg ? [...messages, nudgeMsg] : messages, tools: toolDefs, model: model || s.model || undefined, signal, onToken: d => onEvent?.({ type: 'token', delta: d }) });
+      nudgeMsg = null;
     } catch (e) { onEvent?.({ type: 'error', error: String(e?.message ?? e) }); return null; }
     if (!result.toolCalls.length) {
       if (!result.text.trim()) {
@@ -82,6 +102,15 @@ export async function runTurn({ sessionId, userMessage, model, signal, onEvent }
         if (emptyRetries++ < 2) { turns--; onEvent?.({ type: 'token', delta: '(empty response, retrying)' }); continue; }
         onEvent?.({ type: 'error', error: 'empty provider response' });
         return null;
+      }
+      if (looksLikePseudoToolCall(result.text)) {
+        // Bespoke JSON tool-dialect reply: retry with a corrective nudge
+        // instead of surfacing the blob to the client.
+        if (pseudoRetries++ < 2) {
+          nudgeMsg = { role: 'user', content: TOOL_CHANNEL_NUDGE };
+          onEvent?.({ type: 'token', delta: '(tool-dialect reply, retrying with correction)' });
+          continue;
+        }
       }
       persist(sessionId, { role: 'assistant', content: result.text });
       onEvent?.({ type: 'done', text: result.text, turns, provider: result.provider, model: result.model });

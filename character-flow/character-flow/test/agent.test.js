@@ -3,7 +3,116 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile, mkdir, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadSession, saveSession, runTurn, providerConfig, createRequest } from '../cli/agent.js';
+import { runTurn, loadSession, saveSession, providerConfig, createRequest } from '../cli/agent.js';
+import { cancelMessage, timeoutMessage, toolLine, friendlyError } from '../cli/ui.js';
+
+test('cancel and timeout messages are friendly and stable', () => {
+  assert.match(cancelMessage(), /Cancelled/);
+  assert.match(timeoutMessage(), /timed out/);
+  assert.match(timeoutMessage(30), /\b30 s\b/);
+});
+
+test('toolLine renders ok, failure, timeout and truncated summaries', () => {
+  assert.match(toolLine('read_file', { ok: true, ms: 12, summary: 'src/a.js' }), /✓ read_file 12ms src\/a\.js$/);
+  assert.match(toolLine('run_command', { ok: false, ms: 100, summary: 'exit=1' }), /✗ run_command failed 100ms exit=1$/);
+  assert.match(toolLine('fixture', { ok: true, ms: 5.6 }), /✓ fixture 6ms$/);
+  assert.match(toolLine('fixture', { ok: true }), /^✓ fixture$/);
+  const long = toolLine('x', { ok: true, ms: 1, summary: 'y'.repeat(80) });
+  assert.ok(long.length < 80, 'summary must be truncated');
+  assert.ok(!toolLine('x', { ok: true, ms: 1, summary: 'a\nb' }).includes('\n'), 'single line only');
+});
+
+test('runTurn detects bespoke JSON tool-dialect replies and self-corrects', async () => {
+  const blob = JSON.stringify([{ name: 'read_file', arguments: { path: 'x', session_id: null } }]);
+  const seen = [];
+  let count = 0;
+  const request = async messages => {
+    seen.push(messages);
+    if (count++ === 0) return { choices: [{ message: { role: 'assistant', content: blob } }] };
+    return { choices: [{ message: { role: 'assistant', content: 'Hello! How can I help?' } }] };
+  };
+  const events = [];
+  const result = await runTurn({ messages: [], request, execute: async () => { throw new Error('must not execute the blob'); }, onEvent: name => events.push(name) });
+  assert.equal(result.text, 'Hello! How can I help?', 'recovers with plain text');
+  assert.ok(!result.text.trim().startsWith('['), 'JSON blob never surfaces as the answer');
+  assert.ok(events.some(e => String(e).includes('tool-dialect')), 'user sees a retry notice, not the blob');
+  const nudged = seen[1];
+  const last = nudged.at(-1);
+  assert.equal(last.role, 'user');
+  assert.match(last.content, /not valid output/);
+  assert.ok(!nudged.some(m => typeof m.content === 'string' && m.content.includes('"name":"read_file"') && m.role === 'assistant'), 'blob is not persisted into history');
+});
+
+test('friendlyError distinguishes cancel, timeout and generic errors', () => {
+  assert.match(friendlyError(new DOMException('aborted', 'AbortError'), { aborted: true }), /Cancelled/);
+  assert.match(friendlyError(new DOMException('timed out', 'TimeoutError'), { aborted: false }), /timed out/);
+  assert.match(friendlyError(new Error('Provider HTTP 500'), { aborted: false }), /HTTP 500/);
+  assert.equal(friendlyError(new DOMException('aborted', 'AbortError'), { aborted: false }), 'Error: aborted');
+});
+
+test('runTurn reports tool outcomes via onEvent with ok, duration and summary', async () => {
+  const events = [];
+  let count = 0;
+  const request = async () => {
+    if (count++ === 0) return { choices: [{ message: { role: 'assistant', content: null, tool_calls: [
+      { id: 'a', type: 'function', function: { name: 'read_file', arguments: '{"path":"x"}' } }
+    ] } }] };
+    return { choices: [{ message: { role: 'assistant', content: 'done' } }] };
+  };
+  const result = await runTurn({ messages: [], request, execute: async () => ({ ok: 1 }), onEvent: (name, info) => events.push([name, info]) });
+  assert.equal(result.text, 'done');
+  assert.equal(events[0][0], 'read_file');
+  assert.equal(events[0][1], undefined, 'pre-execution event keeps single-arg shape');
+  assert.equal(events[1][0], 'read_file');
+  assert.equal(events[1][1].ok, true);
+  assert.equal(typeof events[1][1].ms, 'number');
+  assert.equal(events[1][1].summary, 'x');
+});
+
+test('runTurn reports failed tools and run_command summaries', async () => {
+  const events = [];
+  let count = 0;
+  const request = async () => {
+    if (count++ === 0) return { choices: [{ message: { role: 'assistant', content: null, tool_calls: [
+      { id: 'a', type: 'function', function: { name: 'run_command', arguments: '{}' } }
+    ] } }] };
+    return { choices: [{ message: { role: 'assistant', content: 'done' } }] };
+  };
+  await runTurn({ messages: [], request,
+    execute: async () => ({ exitCode: 3, stdout: '', stderr: '' }),
+    onEvent: (name, info) => events.push([name, info]) });
+  assert.equal(events[1][1].ok, true);
+  assert.equal(events[1][1].summary, 'exit=3');
+  let failing = 0;
+  const failRequest = async () => {
+    if (failing++ === 0) return { choices: [{ message: { role: 'assistant', content: null, tool_calls: [
+      { id: 'b', type: 'function', function: { name: 'boom', arguments: '{}' } }
+    ] } }] };
+    return { choices: [{ message: { role: 'assistant', content: 'recovered' } }] };
+  };
+  await runTurn({ messages: [], request: failRequest,
+    execute: async () => { throw new Error('missing binary'); },
+    onEvent: (name, info) => events.push([name, info]) });
+  const last = events.at(-1)[1];
+  assert.equal(last.ok, false);
+  assert.match(last.summary, /missing binary/);
+});
+
+test('aborted turn checkpoints synthetic tool results for every unanswered call', async () => {
+  let checkpoint;
+  const controller = new AbortController();
+  const request = async () => ({ choices: [{ message: { role: 'assistant', content: null, tool_calls: [
+    { id: 'a', type: 'function', function: { name: 'one', arguments: '{}' } },
+    { id: 'b', type: 'function', function: { name: 'two', arguments: '{}' } }
+  ] } }] });
+  await assert.rejects(runTurn({ messages: [], request,
+    execute: async () => { controller.abort(); controller.signal.throwIfAborted(); },
+    signal: controller.signal,
+    onCheckpoint: snapshot => { checkpoint = snapshot; } }));
+  const toolMessages = checkpoint.filter(message => message.role === 'tool');
+  assert.deepEqual(toolMessages.map(message => message.tool_call_id).sort(), ['a', 'b']);
+  for (const message of toolMessages) assert.deepEqual(JSON.parse(message.content), { error: 'aborted' });
+});
 
 async function workspace(t) {
   const cwd = await mkdtemp(join(tmpdir(), 'flow-session-'));
