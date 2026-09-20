@@ -18,6 +18,7 @@
 **/pids/
 **/logs/
 **/*.log
+**/.sword/
 
 # Secrets / env
 **/.env
