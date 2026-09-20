@@ -21,7 +21,22 @@ export function getSession(id) {
   const s = getDb().prepare('SELECT * FROM sessions WHERE id = ?').get(id);
   if (!s) throw Object.assign(new Error('session not found'), { status: 404 });
   s.messages = getDb().prepare('SELECT role, content, tool_calls, tool_call_id, name FROM messages WHERE session_id = ? ORDER BY id').all(id);
+  // CLI shared-mode expects a monotonically bumpable revision on every payload.
+  s.revision = s.messages.length;
   return s;
+}
+
+/** Full-history replace (CLI shared-mode PUT /sessions/:id/messages). */
+export function replaceMessages(id, messages) {
+  const db = getDb();
+  db.transaction(msgs => {
+    db.prepare('DELETE FROM messages WHERE session_id = ?').run(id);
+    for (const m of msgs) {
+      db.prepare('INSERT INTO messages(session_id, role, content, tool_calls, tool_call_id, name) VALUES(?, ?, ?, ?, ?, ?)').run(
+        id, m.role, m.content ?? '', m.tool_calls ? JSON.stringify(m.tool_calls) : null, m.tool_call_id || null, m.name || null);
+    }
+  })(messages);
+  db.prepare("UPDATE sessions SET updated_at = datetime('now') WHERE id = ?").run(id);
 }
 
 export function listSessions() {

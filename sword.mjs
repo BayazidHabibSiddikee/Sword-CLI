@@ -240,8 +240,19 @@ if (String(backendState).startsWith('FAILED')) {
 }
 const args = process.argv.slice(2);
 if (!existsSync(AGENT_JS)) { console.error(`[sword] agent missing: ${AGENT_JS}`); process.exit(1); }
+const userHasEndpoint = Boolean(process.env.OPENAI_BASE_URL || process.env.PROXY_HOST);
 const child = spawn(process.execPath, [AGENT_JS, ...args], {
   stdio: 'inherit', cwd: process.cwd(),
-  env: { ...process.env, SWORDCLI_BASE_URL: `http://127.0.0.1:${backendPort}/v1`, ...(backendPort === API_PORT && TOKEN ? { SWORDCLI_TOKEN: TOKEN } : {}) },
+  env: {
+    ...process.env,
+    // Don't clobber a caller-provided OPENAI_BASE_URL (tests / custom routers);
+    // only inject the sword-server endpoint when the user hasn't chosen one.
+    ...(userHasEndpoint ? {} : { SWORDCLI_BASE_URL: `http://127.0.0.1:${backendPort}/v1` }),
+    // Attach the sword-server token only when we're pointing the CLI at
+    // sword-server; other backends manage their own auth (SWORDCLI_ENDPOINT).
+    ...(!userHasEndpoint && backendPort === API_PORT
+      ? (TOKEN ? { SWORDCLI_TOKEN: TOKEN } : {})
+      : (!userHasEndpoint ? { SWORDCLI_ENDPOINT: `http://127.0.0.1:${backendPort}/v1` } : {})),
+  },
 });
 child.on('exit', c => { process.exitCode = c ?? 1; });

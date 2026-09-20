@@ -1,8 +1,9 @@
-// REST: providers, models, sessions, agent chat (SSE).
+// REST: providers, models, sessions, agent chat (SSE), CLI shared-mode compat.
 import { Router } from 'express';
 import path from 'node:path';
+import { getDb } from '../db.js';
 import { listProviders, addProvider, deleteProvider, listModels } from '../providers.js';
-import { createSession, getSession, listSessions, deleteSession, runTurn } from '../agent/loop.js';
+import { createSession, getSession, listSessions, deleteSession, runTurn, replaceMessages } from '../agent/loop.js';
 import { toolDefs } from '../agent/tools.js';
 
 export const api = Router();
@@ -51,4 +52,31 @@ api.post('/sessions/:id/chat', async (req, res) => {
     await runTurn({ sessionId: req.params.id, userMessage: content, model: req.body?.model, signal: abort.signal, onEvent: emit });
   } catch (e) { emit({ type: 'error', error: e.status === 404 ? 'session not found' : String(e?.message ?? e) }); }
   finally { clearTimeout(timer); res.end(); }
+});
+
+// ---- CLI shared-mode compatibility (character-flow cli/shared.js) ----
+// The CLI's shared client wraps everything in { success, data } and expects:
+//   PUT /sessions/:id/messages { messages, revision } -> { session }
+//   GET /sessions/:id/context?q=...                    -> { context }
+api.put('/sessions/:id/messages', (req, res) => {
+  try {
+    const { messages, revision } = req.body || {};
+    if (!Array.isArray(messages)) return fail(res, 400, 'messages[] required');
+    const current = getSession(req.params.id);
+    if (Number.isSafeInteger(revision) && revision !== current.revision) {
+      return fail(res, 409, `revision mismatch (have ${current.revision}, got ${revision}); reload the session`);
+    }
+    replaceMessages(req.params.id, messages);
+    ok(res, { session: getSession(req.params.id) });
+  } catch (e) { fail(res, e.status || 500, e.message); }
+});
+
+api.get('/sessions/:id/context', (req, res) => {
+  try {
+    const q = String(req.query.q || '').slice(0, 200);
+    const rows = getDb().prepare(
+      "SELECT content FROM messages WHERE session_id = ? AND role IN ('user','assistant') AND content LIKE ? ORDER BY id DESC LIMIT 20"
+    ).all(req.params.id, `%${q}%`);
+    ok(res, { context: rows.map(r => r.content).reverse().join('\n').slice(0, 14000) });
+  } catch (e) { fail(res, e.status || 500, e.message); }
 });
