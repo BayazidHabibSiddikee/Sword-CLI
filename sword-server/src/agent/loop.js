@@ -65,7 +65,7 @@ export async function runTurn({ sessionId, userMessage, model, signal, onEvent }
     else if (m.role === 'tool') messages.push({ role: 'tool', tool_call_id: m.tool_call_id, content: m.content });
     else messages.push({ role: m.role, content: m.content });
   }
-  let turns = 0, toolCalls = 0;
+  let turns = 0, toolCalls = 0, emptyRetries = 0;
   const maxTurns = 10;
   while (turns < maxTurns) {
     turns++;
@@ -76,6 +76,13 @@ export async function runTurn({ sessionId, userMessage, model, signal, onEvent }
       result = await chat({ messages, tools: toolDefs, model: model || s.model || undefined, signal, onToken: d => onEvent?.({ type: 'token', delta: d }) });
     } catch (e) { onEvent?.({ type: 'error', error: String(e?.message ?? e) }); return null; }
     if (!result.toolCalls.length) {
+      if (!result.text.trim()) {
+        // Small local models sometimes return an empty final answer with no
+        // tool calls; retry the turn once or twice before giving up.
+        if (emptyRetries++ < 2) { turns--; onEvent?.({ type: 'token', delta: '(empty response, retrying)' }); continue; }
+        onEvent?.({ type: 'error', error: 'empty provider response' });
+        return null;
+      }
       persist(sessionId, { role: 'assistant', content: result.text });
       onEvent?.({ type: 'done', text: result.text, turns, provider: result.provider, model: result.model });
       return { text: result.text, turns, toolCalls };

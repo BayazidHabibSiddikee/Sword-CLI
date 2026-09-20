@@ -107,6 +107,7 @@ export async function readEventStream(response, onToken) {
 
 export async function runTurn({ messages, request, execute, maxSteps = 20, onEvent = () => {}, onCheckpoint = () => {}, signal }) {
   let history = [...messages];
+  let emptyRetries = 0;
   for (let step = 0; step < maxSteps; step++) {
     signal?.throwIfAborted();
     const data = await request(history);
@@ -117,7 +118,12 @@ export async function runTurn({ messages, request, execute, maxSteps = 20, onEve
     history = [...history, { role: 'assistant', content: msg.content || null, ...(calls.length ? { tool_calls: calls } : {}) }];
     onCheckpoint(history);
     if (!calls.length) {
-      if (typeof msg.content !== 'string' || !msg.content.trim()) throw new Error('Empty provider response');
+      if (typeof msg.content !== 'string' || !msg.content.trim()) {
+        // Small local models occasionally emit an empty final reply with no
+        // tool calls. Retry the step (history unchanged) before failing out.
+        if (emptyRetries++ < 2) { history = history.slice(0, -1); onEvent('(empty response, retrying)'); continue; }
+        throw new Error('Empty provider response');
+      }
       return { text: msg.content, messages: history };
     }
     for (const call of calls) {

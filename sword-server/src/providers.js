@@ -69,7 +69,7 @@ async function firstOllamaModel(p) {
   } catch { return ''; }
 }
 
-export async function chat({ messages, tools = [], model, preferredProvider, signal, onToken, timeoutMs = 120000 }) {
+export async function chat({ messages, tools = [], model, preferredProvider, signal, onToken, timeoutMs = 600000 }) {
   const ordered = routeProviders(preferredProvider);
   const errors = [];
   for (const p of ordered) {

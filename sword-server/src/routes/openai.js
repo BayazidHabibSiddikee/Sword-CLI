@@ -26,7 +26,7 @@ openai.post('/chat/completions', async (req, res) => {
         res.write(`data: ${JSON.stringify({ id, object: 'chat.completion.chunk', choices: [{ index: 0, delta: { tool_calls: r.toolCalls.map((t, i) => ({ index: i, id: t.id, type: 'function', function: t.function })) } }] })}\n\n`);
         res.write('data: [DONE]\n\n');
       }
-    } catch (e) { if (!res.writableEnded) res.write(`data: ${JSON.stringify({ error: { message: e.message } })}\n\n`); }
+    } catch (e) { console.error(`[openai] chat failed: ${e?.stack || e}`); if (!res.writableEnded) res.write(`data: ${JSON.stringify({ error: { message: e.message } })}\n\n`); }
     res.end();
     return;
   }
