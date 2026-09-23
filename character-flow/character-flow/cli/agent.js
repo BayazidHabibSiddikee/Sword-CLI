@@ -1,5 +1,6 @@
 import { readFile, writeFile, mkdir, rename, lstat } from 'node:fs/promises';
 import { join } from 'node:path';
+import { elapsed, summarizeResult } from './ui.js';
 
 export function providerConfig(env = process.env) {
   const base = new URL(env.OPENAI_BASE_URL || env.PROXY_HOST || 'http://localhost:3001/v1');
@@ -11,52 +12,178 @@ export function providerConfig(env = process.env) {
   return { url: `${root.endsWith('/v1') ? root : `${root}/v1`}/chat/completions`, key: env.OPENAI_API_KEY || '', model: env.OPENAI_MODEL || 'auto' };
 }
 
-export function createRequest(config, tools, signal) {
+export function createRequest(config, tools, signal, onToken) {
   return async messages => {
     if (JSON.stringify(messages).length > 500000) throw new Error('Context limit reached; start a new session with /clear');
+    const stream = typeof onToken === 'function';
+    // Local CPU backends (e.g. Ollama on CPU) can take minutes per turn once
+    // tool results are in the history — keep generous ceilings. The non-stream
+    // path is the one that matters for slow endpoints; stream still aborts if
+    // NO bytes flow at all.
+    const timeout = stream ? 600000 : 420000;
     const response = await fetch(config.url, {
       method: 'POST', redirect: 'error',
-      headers: { 'Content-Type': 'application/json', ...(config.key ? { Authorization: `Bearer ${config.key}` } : {}) },
-      body: JSON.stringify({ model: config.model, messages, tools, stream: false }),
-      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(120000)]) : AbortSignal.timeout(120000)
+      headers: {
+        'Content-Type': 'application/json',
+        ...(config.key ? { Authorization: `Bearer ${config.key}` } : {}),
+        ...(stream ? { Accept: 'text/event-stream' } : {})
+      },
+      body: JSON.stringify({ model: config.model, messages, tools, stream }),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeout)]) : AbortSignal.timeout(timeout)
     });
     if (!response.ok) throw new Error(`Provider HTTP ${response.status}; check endpoint, model and credentials`);
-    let text = '';
-    const decoder = new TextDecoder();
-    for await (const chunk of response.body) {
-      text += decoder.decode(chunk, { stream: true });
-      if (text.length > 1000000) throw new Error('Provider response too large');
+    // Some endpoints ignore `stream`; keep the buffered path as the safe default.
+    if (stream && (response.headers.get('content-type') || '').includes('text/event-stream')) {
+      return readEventStream(response, onToken);
     }
-    try { return JSON.parse(text + decoder.decode()); } catch { throw new Error('Invalid provider response'); }
+    return readJsonBody(response);
   };
 }
 
+async function readJsonBody(response) {
+  let text = '';
+  const decoder = new TextDecoder();
+  for await (const chunk of response.body) {
+    text += decoder.decode(chunk, { stream: true });
+    if (text.length > 1000000) throw new Error('Provider response too large');
+  }
+  try { return JSON.parse(text + decoder.decode()); } catch { throw new Error('Invalid provider response'); }
+}
+
+/**
+ * Assemble an OpenAI-compatible SSE stream into the same shape as a buffered
+ * completion, invoking onToken for each content delta. Tool-call deltas arrive
+ * fragmented, so they are accumulated by index and returned as whole calls.
+ */
+export async function readEventStream(response, onToken) {
+  if (!response.body) throw new Error('Invalid provider response');
+  const decoder = new TextDecoder();
+  const calls = new Map();
+  let buffer = '';
+  let content = '';
+  let done = false;
+  const consume = payload => {
+    if (payload === '[DONE]') { done = true; return; }
+    let data;
+    try { data = JSON.parse(payload); } catch { return; }
+    if (data?.error) throw new Error(data.error.message || 'Provider stream error');
+    const delta = data?.choices?.[0]?.delta;
+    if (!delta) return;
+    if (typeof delta.content === 'string' && delta.content) {
+      content += delta.content;
+      if (content.length > 1000000) throw new Error('Provider response too large');
+      onToken(delta.content);
+    }
+    for (const call of delta.tool_calls || []) {
+      const index = Number.isSafeInteger(call.index) ? call.index : calls.size;
+      const entry = calls.get(index) || { id: '', type: 'function', function: { name: '', arguments: '' } };
+      if (call.id) entry.id = call.id;
+      if (call.type) entry.type = call.type;
+      if (call.function?.name) entry.function.name += call.function.name;
+      if (typeof call.function?.arguments === 'string') entry.function.arguments += call.function.arguments;
+      calls.set(index, entry);
+    }
+  };
+  for await (const chunk of response.body) {
+    buffer += decoder.decode(chunk, { stream: true });
+    if (buffer.length > 2000000) throw new Error('Provider response too large');
+    let newline;
+    while (!done && (newline = buffer.indexOf('\n')) !== -1) {
+      const line = buffer.slice(0, newline).replace(/\r$/, '');
+      buffer = buffer.slice(newline + 1);
+      if (line.startsWith('data:')) consume(line.slice(5).trim());
+    }
+    if (done) break;
+  }
+  if (!done) {
+    buffer += decoder.decode();
+    const tail = buffer.trim();
+    if (tail.startsWith('data:')) consume(tail.slice(5).trim());
+  }
+  const message = { role: 'assistant', content: content || null };
+  if (calls.size) message.tool_calls = [...calls.entries()].sort((a, b) => a[0] - b[0]).map(([, value]) => value);
+  return { choices: [{ message }] };
+}
+
+// Small local models sometimes answer in their own bespoke tool dialect — a
+// raw JSON array like [{"name":"read_file","arguments":{...}}] — instead of
+// using the OpenAI tool_calls channel or plain text. Detect it so the loop can
+// self-correct instead of showing the user a JSON blob.
+const PSEUDO_TOOL_RE = /^\s*\[\s*\{\s*"name"\s*:/;
+export function looksLikePseudoToolCall(text) {
+  if (typeof text !== 'string' || !PSEUDO_TOOL_RE.test(text)) return false;
+  try {
+    const arr = JSON.parse(text);
+    return Array.isArray(arr) && arr.length > 0 && arr.every(x =>
+      x && typeof x.name === 'string' && (x.arguments === undefined || (x.arguments && typeof x.arguments === 'object')));
+  } catch { return false; }
+}
+
+export const TOOL_CHANNEL_NUDGE =
+  'Your previous reply was a raw JSON tool-call, which is not valid output here. ' +
+  'Either use one of the provided tools through the proper tool-call channel, or answer in plain natural language. ' +
+  'Never output JSON blobs as message text.';
+
 export async function runTurn({ messages, request, execute, maxSteps = 20, onEvent = () => {}, onCheckpoint = () => {}, signal }) {
   let history = [...messages];
+  let emptyRetries = 0;
+  let pseudoRetries = 0;
+  let nudgeMsg = null;
   for (let step = 0; step < maxSteps; step++) {
     signal?.throwIfAborted();
-    const data = await request(history);
+    const data = await request(nudgeMsg ? [...history, nudgeMsg] : history);
+    nudgeMsg = null;
     const msg = data?.choices?.[0]?.message;
     if (!msg || msg.role !== 'assistant') throw new Error('Invalid provider response');
     const calls = msg.tool_calls || [];
     if (!Array.isArray(calls) || calls.length > 16) throw new Error('Invalid tool calls');
+    if (!calls.length && looksLikePseudoToolCall(msg.content)) {
+      // Bespoke JSON tool-dialect reply: retry with a corrective nudge instead
+      // of surfacing the blob (or mis-executing it) — the model usually
+      // recovers to the proper tool channel or plain text after one nudge.
+      if (pseudoRetries++ < 2) {
+        nudgeMsg = { role: 'user', content: TOOL_CHANNEL_NUDGE };
+        onEvent('(tool-dialect reply, retrying with correction)');
+        continue;
+      }
+    }
     history = [...history, { role: 'assistant', content: msg.content || null, ...(calls.length ? { tool_calls: calls } : {}) }];
     onCheckpoint(history);
     if (!calls.length) {
-      if (typeof msg.content !== 'string' || !msg.content.trim()) throw new Error('Empty provider response');
+      if (typeof msg.content !== 'string' || !msg.content.trim()) {
+        // Small local models occasionally emit an empty final reply with no
+        // tool calls. Retry the step (history unchanged) before failing out.
+        if (emptyRetries++ < 2) { history = history.slice(0, -1); onEvent('(empty response, retrying)'); continue; }
+        throw new Error('Empty provider response');
+      }
       return { text: msg.content, messages: history };
     }
     for (const call of calls) {
       signal?.throwIfAborted();
       if (!call.id || !call.function?.name) throw new Error('Invalid tool call');
       onEvent(call.function.name);
-      let result;
+      const startedAt = performance.now();
+      let args = null;
+      let failure = null;
+      let result = null;
       try {
-        const args = JSON.parse(call.function.arguments || '{}');
+        args = JSON.parse(call.function.arguments || '{}');
         result = await execute(call.function.name, args);
       } catch (error) {
-        signal?.throwIfAborted();
-        result = { error: error.message };
+        if (signal?.aborted) failure = error;
+        else {
+          result = { error: error.message };
+          onEvent(call.function.name, { ok: false, ms: elapsed(startedAt), summary: error.message });
+        }
+      }
+      if (failure) {
+        checkpointRepair(history, calls, onCheckpoint);
+        throw failure;
+      }
+      signal?.throwIfAborted();
+      if (!failure) {
+        const summary = summarizeResult(result) || (args && typeof args.path === 'string' ? args.path : '');
+        onEvent(call.function.name, { ok: result?.error === undefined, ms: elapsed(startedAt), summary });
       }
       const serialized = JSON.stringify(result ?? null);
       const content = serialized.length > 16384 ? `${serialized.slice(0, 8000)}\n[truncated]\n${serialized.slice(-8000)}` : serialized;
@@ -65,6 +192,17 @@ export async function runTurn({ messages, request, execute, maxSteps = 20, onEve
     }
   }
   throw new Error(`Agent step limit (${maxSteps}) reached`);
+}
+
+function checkpointRepair(history, calls, onCheckpoint) {
+  const answered = new Set(history.filter(m => m.role === 'tool').map(m => m.tool_call_id));
+  const missing = calls.filter(call => call.id && !answered.has(call.id));
+  if (!missing.length) return;
+  let repaired = history;
+  for (const call of missing) {
+    repaired = [...repaired, { role: 'tool', tool_call_id: call.id, content: JSON.stringify({ error: 'aborted' }) }];
+  }
+  onCheckpoint(repaired);
 }
 
 async function sessionPath(cwd, name) {
