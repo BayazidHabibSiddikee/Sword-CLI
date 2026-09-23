@@ -20,7 +20,6 @@ import {
   approvePrompt, statusLine, markdownLite, closestCommand,
   banner, safe
 } from './ui.js';
-import { speak } from './tts.js';
 
 // ── RAG + Session singletons ───────────────────────────────────────────────────
 const __dirname = import.meta.dirname; // Node ≥20.6; safe in this project
@@ -78,7 +77,7 @@ Configuration: OPENAI_BASE_URL, OPENAI_API_KEY, OPENAI_MODEL; PROXY_HOST fallbac
 Model choice: --model, else SWORD_MODEL, else the strongest model the backend
 advertises, else backend auto-routing. The backend's balanced routing strategy
 picks much weaker models (flash-lite class), so SwordCLI selects a strong one.
-Default endpoint: http://localhost:3001/v1
+Default endpoint: http://localhost:3101/v1 (independent sword-server)
 Project content is sent to your chosen provider. Use only trusted workspaces.
 `;
 async function main() {
@@ -86,9 +85,8 @@ async function main() {
     prompt: { type: 'string', short: 'p' }, cwd: { type: 'string' },
     model: { type: 'string' }, session: { type: 'string' }, mode: { type: 'string', default: 'coding' },
     json: { type: 'boolean' }, help: { type: 'boolean', short: 'h' },
-    shared: { type: 'boolean' },    local: { type: 'boolean' }, 'shared-session': { type: 'string' }, 'import-session': { type: 'string' },
-    team: { type: 'boolean' },
-    'auto-approve': { type: 'boolean' }
+    shared: { type: 'boolean' }, local: { type: 'boolean' }, 'shared-session': { type: 'string' }, 'import-session': { type: 'string' },
+    team: { type: 'boolean' }
   } });
   if (values.help) { console.log(HELP); return; }
   if (values.json && !values.prompt) throw new Error('--json requires --prompt');
@@ -139,7 +137,14 @@ async function main() {
   let spinner = null;
   let active;
   let teamMode = Boolean(values.team);
-  const cancel = () => { if (active) active.abort(); else rl?.close(); };
+  const cancel = () => { 
+    if (active) active.abort(); 
+    else if (rl) {
+      console.error('\n(Type /exit to quit)');
+      // Give them a fresh prompt line if they were typing
+      rl.write(null, { ctrl: true, name: 'u' }); 
+    }
+  };
   process.on('SIGINT', cancel);
   rl?.on('SIGINT', cancel);
   async function turn(prompt) {
@@ -150,11 +155,9 @@ async function main() {
       spinner = ora({ text: 'Thinking…', stream: process.stderr }).start();
     }
     const approve = async proposal => {
-      if (values['auto-approve']) return true;
       if (!rl) return false;
       console.error(`\n`);
       console.error(approvePrompt(proposal));
-      speak('Permission required for tool execution.').catch(() => {});
       try {
         return (await rl.question('Allow this one action? [y/N] ', { signal: active.signal })).trim().toLowerCase() === 'y';
       } catch { return false; }
@@ -288,7 +291,6 @@ async function main() {
       else if (streamed) process.stderr.write('\n');
       else if (interactive) console.log(markdownLite(result.text, true));
       else console.log(safe(result.text));
-      speak('Task completed.').catch(() => {});
     } catch (error) {
       // The finally below clears `active` before the REPL catch sees this error,
       // so record the user-abort fact now; friendlyError maps it to "Cancelled."
@@ -321,7 +323,7 @@ async function main() {
     console.error(`/help for commands. Ctrl+C cancels the current turn.`);
     while (!rl.closed) {
       let line;
-      try { line = (await rl.question('\nsword> ')).trim(); } catch (e) { console.error('Question error:', e); break; }
+      try { line = (await rl.question('\nsword> ')).trim(); } catch (err) { console.error('Question err:', err); break; }
       if (!line) continue;
       if (line === '/exit' || line === '/quit') break;
       if (line === '/help') { console.error(HELP + `\n/status  Show session, model, cwd and history.\n/team    Toggle round-robin team discussion mode (10 agents + writer)`); continue; }
@@ -352,7 +354,7 @@ async function main() {
         const { listProviders, addProvider, removeProvider } = await import('./providers.js');
         if (!sub || sub === 'list' || sub === 'ls') {
           const custom = listProviders();
-          console.error(`\nProviders:\n  local   ${config.url || 'http://127.0.0.1:3001/v1'}\n  g4f     anonymous fallback\n  remote  SWORDCLI_BASE_URL / OPENAI_BASE_URL`);
+          console.error(`\nProviders:\n  local   ${config.url || 'http://127.0.0.1:3101/v1'}\n  g4f     anonymous fallback\n  remote  SWORDCLI_BASE_URL / OPENAI_BASE_URL`);
           if (custom.length) {
             for (const p of custom) console.error(`  custom  ${p.name} -> ${p.baseUrl} (model: ${p.model || 'default'})`);
           }
@@ -386,11 +388,24 @@ async function main() {
         continue;
       }
       if (line === '/web') {
-        const url = process.env.SWORD_WEB_URL || 'http://localhost:3002';
-        console.error(`Opening web portal: ${url}`);
+        // Prefer an explicit URL, else the unified web UI served by the Sword
+        // backend itself (same origin as /api + /v1, so no CORS split-brain).
+        // SWORD_WEB_PORT defaults to the independent web UI port (3002);
+        // sword-server itself is API-only on :3101.
+        const port = process.env.SWORD_WEB_PORT || '3002';
+        const url = process.env.SWORD_WEB_URL || `http://localhost:${port}`;
+        console.error(`Opening web UI: ${url} (backend also serves /v1 + /api/agent on this port)`);
         try {
-          const { execCommand } = await import('./tools.js');
-          await execCommand(`open "${url}" || xdg-open "${url}" || start "${url}"`);
+          // execCommand is internal-only; open the browser via a plain spawn.
+          const { spawn } = await import('node:child_process');
+          const opener = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open';
+          const args = process.platform === 'win32' ? ['/c', 'start', url] : [url];
+          await new Promise(resolve => {
+            const child = spawn(opener, args, { stdio: 'ignore', detached: true });
+            child.on('error', () => resolve());
+            child.unref();
+            setTimeout(resolve, 1500);
+          });
         } catch {
           console.error(`Open it manually: ${url}`);
         }
