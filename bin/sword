@@ -8,8 +8,8 @@ import { spawn } from 'node:child_process';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, '..');
 
-// The CLI lives at character-flow/cli/flow.js
-const script = join(root, 'character-flow', 'cli', 'flow.js');
+// The CLI lives at cli/flow.js
+const script = join(root, 'cli', 'flow.js');
 
 if (!existsSync(script)) {
   console.error(`sword: Cannot find ${script}`);

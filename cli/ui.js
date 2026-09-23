@@ -77,6 +77,7 @@ export function statusLine(opts) {
   } else {
     lines.push(`  ${chalk.dim('session:')}   (local | ephemeral)`);
   }
+  lines.push(`  ${chalk.dim('contact:')}   bayazid@med.com.bd`);
   lines.push(`  ${chalk.dim('history:')}   ${historyCount} message(s)`);
   lines.push(`  ${chalk.dim('approvals:')} ${approval}`);
   lines.push('');
@@ -86,10 +87,7 @@ export function statusLine(opts) {
 export function markdownLite(text, interactive) {
   if (!text) return '';
   if (interactive) {
-    let escaped = String(text)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
+    let escaped = String(text);
     const parts = [];
     let i = 0;
     while (i < escaped.length) {
@@ -169,6 +167,7 @@ export function banner(opts) {
   } else {
     lines.push(`  ${chalk.dim('session:')} (local | ephemeral)`);
   }
+  lines.push(`  ${chalk.dim('contact:')} bayazid@med.com.bd`);
   lines.push('');
   return lines.join('\n');
 }
