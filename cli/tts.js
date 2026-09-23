@@ -1,9 +1,21 @@
 import gTTS from 'gtts';
-import player from 'play-sound';
+import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-const audioPlayer = player({});
+function playAudio(file) {
+  return new Promise((resolve) => {
+    // mpg123 is perfectly safe for CLI background audio, does not grab TTY
+    const child = spawn('mpg123', ['-q', file], { stdio: 'ignore' });
+    child.on('close', resolve);
+    child.on('error', () => {
+       // fallback to mpv
+       const fallback = spawn('mpv', ['--no-terminal', file], { stdio: 'ignore' });
+       fallback.on('close', resolve);
+       fallback.on('error', resolve);
+    });
+  });
+}
 
 export function speak(text) {
   return new Promise((resolve) => {
@@ -12,7 +24,7 @@ export function speak(text) {
       const filepath = join(tmpdir(), 'swordcli-tts.mp3');
       tts.save(filepath, function (err) {
         if (err) return resolve();
-        audioPlayer.play(filepath, () => resolve());
+        playAudio(filepath).then(resolve);
       });
     } catch {
       resolve();
