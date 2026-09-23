@@ -4,17 +4,8 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 function playAudio(file) {
-  return new Promise((resolve) => {
-    // mpg123 is perfectly safe for CLI background audio, does not grab TTY
-    const child = spawn('mpg123', ['-q', file], { stdio: 'ignore' });
-    child.on('close', resolve);
-    child.on('error', () => {
-       // fallback to mpv
-       const fallback = spawn('mpv', ['--no-terminal', file], { stdio: 'ignore' });
-       fallback.on('close', resolve);
-       fallback.on('error', resolve);
-    });
-  });
+  process.stdout.write('\x07'); // Terminal bell
+  return new Promise((resolve) => resolve());
 }
 
 export function speak(text) {
