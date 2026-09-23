@@ -1,7 +1,9 @@
 export function createSharedClient(provider) {
   const endpoint = new URL(provider.url);
-  if (!['127.0.0.1', 'localhost', '[::1]'].includes(endpoint.hostname) && endpoint.protocol !== 'https:') throw new Error('Remote backend requires HTTPS');
-  const base = endpoint.pathname.endsWith('/api/sword') ? endpoint.href.replace(/\/+$/, '') : endpoint.href.replace(/\/v1\/chat\/completions$/, '/api/sword').replace(/\/+$/, '');
+  if (!endpoint.pathname.endsWith('/v1/chat/completions')) throw new Error('Shared sessions require a swordcli endpoint');
+  if (endpoint.protocol !== 'https:' && !(endpoint.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(endpoint.hostname))) throw new Error('Remote backend requires HTTPS');
+  endpoint.pathname = endpoint.pathname.replace(/\/v1\/chat\/completions$/, '/api/sword');
+  const base = endpoint.href;
   async function call(method, route, body) {
     const response = await fetch(`${base}${route}`, {
       method, redirect: 'error', signal: AbortSignal.timeout(15000),

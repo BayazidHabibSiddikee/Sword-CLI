@@ -121,7 +121,7 @@ character-flow/
 
 ```bash
 # 1. Start the shared brain server (port 3001)
-cd /home/sword/Documents/Characters/freellmapi
+cd /home/sword/Documents/Characters/swordcli
 npx tsx server/src/index.ts
 
 # 2. Launch either character in another terminal:
@@ -166,6 +166,6 @@ npm run mahina
 
 ## Live Chat
 
-Type any normal question (no `/`) and it routes through freellmapi to your configured LLM model, with the character's system prompt + BM25-retrieved context prepended automatically.
+Type any normal question (no `/`) and it routes through swordcli to your configured LLM model, with the character's system prompt + BM25-retrieved context prepended automatically.
 
 Configure your model key at http://localhost:3001/keys

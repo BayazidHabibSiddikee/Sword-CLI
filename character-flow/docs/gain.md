@@ -10,7 +10,7 @@ _Session date: 2025-09-13_
 The target repo `BayazidHabibSiddikee/character-flow` cloned successfully but contains no commits.
 → Decision: treat it as a fresh canvas; scaffold everything from scratch inside it.
 
-### 2. freellmapi is feature-heavy
+### 2. swordcli is feature-heavy
 - 6 client pages (Models/Fallback, Playground, Keys, Embeddings, Analytics, Premium)
 - 16 server routes including debate simulator, business module, premium, embeddings
 - ~800 lines in `server/src/app.ts` mounting routers
@@ -34,15 +34,15 @@ The target repo `BayazidHabibSiddikee/character-flow` cloned successfully but co
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Brain language | JavaScript (Node) | freellmapi is TS/Node; TUI is React; keeping it unified |
+| Brain language | JavaScript (Node) | swordcli is TS/Node; TUI is React; keeping it unified |
 | Storage | SQLite (primary) + PG (optional) | Zero-config, portable; PG for production scaling |
 | BM25 implementation | Pure JS, no external libs | Matches marin's Python version exactly |
-| TUI framework | Ink (React for terminal) | Consistent with freellmapi client stack; faster iteration |
+| TUI framework | Ink (React for terminal) | Consistent with swordcli client stack; faster iteration |
 | Character persona | Izuku Midoriya × Multi-Laws Wisdom | Fusion of analytical hero + universal law collector |
 | Quote generation | Template + law-matching | Deterministic, no LLM dependency for basic output |
 | Poetry generation | Law-aware template | Each stanza references a real universal law |
 | Business ideas | Law-grounded templates | Every idea cites which law enables it |
-| freellmapi slimming | Keep only keys + usage + proxy | Reduces attack surface, startup time, mental load |
+| swordcli slimming | Keep only keys + usage + proxy | Reduces attack surface, startup time, mental load |
 | Repo location | `/home/sword/Documents/Characters/` | Clean separation from marin and tools projects |
 
 ---
@@ -58,19 +58,19 @@ The target repo `BayazidHabibSiddikee/character-flow` cloned successfully but co
 
 ## What Comes Next (Priority Order)
 
-1. **Copy & slim freellmapi** — biggest infrastructure win
+1. **Copy & slim swordcli** — biggest infrastructure win
 2. **Port brain to JS** — enables standalone character-flow
 3. **Build TUI prototype** — proves the end-to-end flow
 4. **Seed the database** — populates the character with personality
-5. **Integration test** — TUI → freellmapi → brain → response
+5. **Integration test** — TUI → swordcli → brain → response
 
 ---
 
 ## Notes for Future Sessions
 
 - The Python `izuku_character.py` in marin is a reference implementation. The JS port should match its behavior exactly.
-- freellmapi-minimal should still support the full OpenAI-compatible `/v1/chat` proxy — the character brain is an overlay, not a replacement.
+- swordcli-minimal should still support the full OpenAI-compatible `/v1/chat` proxy — the character brain is an overlay, not a replacement.
 - The TUI command palette (`/quote`, `/poem`, `/idea`) should call character-specific endpoints, not the general proxy.
 - Keep `docs/gain.md` updated every session — it's the institutional memory.
-- **Custom providers**: freellmapi supports custom OpenAI-compatible providers via `POST /api/keys/custom`. ByNara Router (`https://router.bynara.id/v1`) is saved as fallback with model `agnes-2.5-flash` (key: `sk-nry-...OIhQ`).
+- **Custom providers**: swordcli supports custom OpenAI-compatible providers via `POST /api/keys/custom`. ByNara Router (`https://router.bynara.id/v1`) is saved as fallback with model `agnes-2.5-flash` (key: `sk-nry-...OIhQ`).
 - **Knowledge base**: Drop PDF/DOCX/TXT/MD files into `character-flow/data/documents/` or upload via `/api/kb/upload` — they're chunked and indexed into the shared RAG engine automatically.

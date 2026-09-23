@@ -1,7 +1,3 @@
-# Local coding-agent sessions
-**/.flow/
-
-
 # Dependencies
 **/node_modules/
 **/package-lock.json
@@ -40,7 +36,7 @@ Thumbs.db
 **/.ruff_cache/
 **/.pytest_cache/
 
-# Freellmapi specific
-freellmapi/server/data/
-freellmapi/pids/
-freellmapi/logs/
+# SwordCLI specific
+swordcli/server/data/
+swordcli/pids/
+swordcli/logs/

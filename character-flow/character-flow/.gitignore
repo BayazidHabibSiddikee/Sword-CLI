@@ -36,13 +36,13 @@ Thumbs.db
 **/.ruff_cache/
 **/.pytest_cache/
 
-# Freellmapi specific
-freellmapi/server/data/
-freellmapi/pids/
-freellmapi/logs/
-freellmapi/decrypt.js
-freellmapi/update_hermes.js
-freellmapi/.env
-freellmapi/**/*.db
-freellmapi/**/*.db-shm
-freellmapi/**/*.db-wal
+# SwordCLI specific
+swordcli/server/data/
+swordcli/pids/
+swordcli/logs/
+swordcli/decrypt.js
+swordcli/update_hermes.js
+swordcli/.env
+swordcli/**/*.db
+swordcli/**/*.db-shm
+swordcli/**/*.db-wal

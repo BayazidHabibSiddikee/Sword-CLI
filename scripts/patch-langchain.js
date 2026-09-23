@@ -3,7 +3,7 @@
 import fs from 'fs';
 const shimPath = 'node_modules/@langchain/core/dist/utils/uuid/index.js';
 const shimContent = `// Patched uuid shim — added by character-flow postinstall
-import * as _uuid from '/home/sword/Documents/Characters/character-flow/node_modules/uuid/dist/index.js';
+import * as _uuid from '/home/sword/Documents/Characters/character-flow/character-flow/node_modules/uuid/dist/index.js';
 export const v1 = _uuid.v1;
 export const v3 = _uuid.v3;
 export const v4 = _uuid.v4;
@@ -26,7 +26,7 @@ export default {
 try {
   fs.mkdirSync('node_modules/@langchain/core/dist/utils/uuid', { recursive: true });
   fs.writeFileSync(shimPath, shimContent);
-  console.log('[patch] uuid shim written ✓');
+  console.log('[patch] uuid shim written');
 } catch(e) {
   console.error('[patch] skipped:', e.message);
 }

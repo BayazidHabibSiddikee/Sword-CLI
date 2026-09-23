@@ -10,7 +10,7 @@
     "tui": "node cli/tui.js",
     "server": "node server.js",
     "web": "npm run dev --prefix web",
-    "freellmapi": "cd ../freellmapi && npm run dev",
+    "swordcli": "cd ../swordcli && npm run dev",
     "dev": "node start.js",
     "dev:web": "node start.js --web-only",
     "dev:tui": "node start.js --tui",

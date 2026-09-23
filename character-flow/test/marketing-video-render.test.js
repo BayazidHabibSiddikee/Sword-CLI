@@ -90,7 +90,7 @@ test('marketing video loop renders real local media, probes it, and denial stops
       }
     ]),
     execute,
-    onEvent: (name, info) => { if (info === undefined) events.push(name); }
+    onEvent: name => events.push(name)
   });
 
   assert.match(text, /270x480/);
@@ -135,7 +135,7 @@ test('marketing video loop renders real local media, probes it, and denial stops
       async history => ({ content: `export stopped: ${history.at(-1).content}` })
     ]),
     execute: createTools({ cwd, timeout: 120000, approve: async request => { denials.push(request); return false; } }),
-    onEvent: (name, info) => { if (info === undefined) events.push(name); }
+    onEvent: name => events.push(name)
   });
 
   assert.equal(denials.length, 1, 'approval callback must see and deny the render');

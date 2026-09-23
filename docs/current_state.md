@@ -64,8 +64,8 @@ START → llm_node → [has tool_calls?] → tool_node → llm_node → … → 
 ```bash
 cd /home/sword/Documents/Characters/character-flow
 
-# Start freellmapi proxy first
-cd ../freellmapi && npx tsx server/src/index.ts
+# Start swordcli proxy first
+cd ../swordcli && npx tsx server/src/index.ts
 
 # Then in another terminal:
 npm run turing   # LangGraph agent — logic, algorithms, code execution
@@ -91,3 +91,10 @@ npm run kael     # LangGraph agent — ML training, metrics, pipelines
 - ✅ Real data: live Bitcoin price ($77k), AAPL ($332), web search, Python execution
 - ✅ Multi-tool chains: "Get BTC price AND translate to Japanese" works in one turn
 - ✅ 47 JS files, 10 SQLite databases, all committed and pushed
+
+## Recent Updates
+- Integrated React Markdown, Syntax Highlighting, and Claude-style Artifact panel in the web UI.
+- Renamed internal `freellmapi` package to `swordcli`.
+- Added gTTS voice notifications for tool approvals and task completions.
+- Fixed non-interactive CLI background execution by introducing an `--auto-approve` flag.
+- Configured Izuku as the default persona for coding mode.

@@ -1,24 +1,78 @@
 {
-  "name": "swordcli",
-  "version": "0.1.0",
+  "name": "character-flow",
   "private": true,
+  "version": "1.0.0",
+  "description": "SwordCLI — a project coding assistant CLI with streaming, tool approvals, durable sessions and read-only web tooling",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BayazidHabibSiddikee/character-flow.git"
+  },
+  "homepage": "https://github.com/BayazidHabibSiddikee/character-flow#readme",
+  "bugs": "https://github.com/BayazidHabibSiddikee/character-flow/issues",
+  "keywords": [
+    "cli",
+    "ai",
+    "agent",
+    "coding-assistant",
+    "llm",
+    "openai-compatible",
+    "streaming"
+  ],
   "type": "module",
   "bin": {
-    "sword": "./bin/sword"
+    "flow": "cli/flow.js",
+    "sword": "cli/flow.js"
+  },
+  "engines": {
+    "node": ">=22"
   },
   "scripts": {
-    "sword": "node bin/sword --shared",
-    "sword:local": "node bin/sword --local",
-    "dev:web": "node character-flow/character-flow/character-flow/server.js",
-    "dev:freellmapi": "cd character-flow/character-flow/GET_API/server && npm run dev",
-    "dev": "npm run dev:freellmapi & sleep 2 && npm run dev:web",
-    "build:web": "cd character-flow/character-flow/web && npm run build",
-    "setup": "npm install && cd character-flow/character-flow && npm install && cd GET_API/server && npm install"
+    "flow": "node cli/flow.js",
+    "test": "node --experimental-test-module-mocks --test test/*.test.js",
+    "test:coverage": "node --experimental-test-module-mocks --test --experimental-test-coverage --test-coverage-include='cli/*.js' test/*.test.js",
+    "flow:agent": "node cli/flow.js",
+    "flow:web": "npm run dev --prefix web",
+    "flow:server": "node server.js",
+    "flow:all": "npm run flow:server &",
+    "seed": "node brain/seed_izuku.js",
+    "seed:all": "node brain/seed_izuku.js && node brain/seed_mahina.js && node brain/seed_muhan.js && node brain/seed_plastos.js && node brain/seed_monk.js && node brain/seed_prince.js && node brain/seed_turing.js && node brain/seed_sable.js && node brain/seed_ada.js && node brain/seed_kael.js",
+    "postinstall": "node scripts/patch-langchain.js",
+    "ci": "npm run test:coverage && echo '=== /home/sword refs ===' && grep -rn '/home/sword' scraper/ || true && echo '=== npm pack dry-run ===' && npm pack --dry-run | grep -vE '^$' && echo 'CI OK'"
   },
   "dependencies": {
-    "better-sqlite3": "^13.0.3",
+    "@gpt4free/g4f.dev": "^1.1.2",
+    "@langchain/core": "^1.2.11",
+    "@langchain/langgraph": "^1.4.15",
+    "@langchain/openai": "^0.5.0",
+    "better-sqlite3": "^12.11.1",
     "chalk": "^5.3.0",
-    "g4f": "^1.0.0",
-    "ora": "^8.0.0"
+    "ffaivideo": "^1.9.5",
+    "g4f": "^1.4.6",
+    "gtts": "^0.2.1",
+    "mammoth": "^1.12.3",
+    "ora": "^8.0.1",
+    "pdf-parse": "^2.4.5",
+    "play-sound": "^1.1.6",
+    "uuid": "^14.0.2"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0"
+  },
+  "files": [
+    "cli/",
+    "scraper/",
+    "brain/",
+    "tools/",
+    "core/",
+    "data/",
+    "scripts/",
+    "skills/",
+    "server.js",
+    "langgraph-agent.js",
+    ".github/workflows/ci.yml"
+  ],
+  "allowScripts": {
+    "better-sqlite3@12.11.1": true
   }
 }

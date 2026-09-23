@@ -16,7 +16,11 @@ export function createRequest(config, tools, signal, onToken) {
   return async messages => {
     if (JSON.stringify(messages).length > 500000) throw new Error('Context limit reached; start a new session with /clear');
     const stream = typeof onToken === 'function';
-    const timeout = stream ? 300000 : 120000;
+    // Local CPU backends (e.g. Ollama on CPU) can take minutes per turn once
+    // tool results are in the history — keep generous ceilings. The non-stream
+    // path is the one that matters for slow endpoints; stream still aborts if
+    // NO bytes flow at all.
+    const timeout = stream ? 600000 : 420000;
     const response = await fetch(config.url, {
       method: 'POST', redirect: 'error',
       headers: {
@@ -101,19 +105,57 @@ export async function readEventStream(response, onToken) {
   return { choices: [{ message }] };
 }
 
+// Small local models sometimes answer in their own bespoke tool dialect — a
+// raw JSON array like [{"name":"read_file","arguments":{...}}] — instead of
+// using the OpenAI tool_calls channel or plain text. Detect it so the loop can
+// self-correct instead of showing the user a JSON blob.
+const PSEUDO_TOOL_RE = /^\s*\[\s*\{\s*"name"\s*:/;
+export function looksLikePseudoToolCall(text) {
+  if (typeof text !== 'string' || !PSEUDO_TOOL_RE.test(text)) return false;
+  try {
+    const arr = JSON.parse(text);
+    return Array.isArray(arr) && arr.length > 0 && arr.every(x =>
+      x && typeof x.name === 'string' && (x.arguments === undefined || (x.arguments && typeof x.arguments === 'object')));
+  } catch { return false; }
+}
+
+export const TOOL_CHANNEL_NUDGE =
+  'Your previous reply was a raw JSON tool-call, which is not valid output here. ' +
+  'Either use one of the provided tools through the proper tool-call channel, or answer in plain natural language. ' +
+  'Never output JSON blobs as message text.';
+
 export async function runTurn({ messages, request, execute, maxSteps = 20, onEvent = () => {}, onCheckpoint = () => {}, signal }) {
   let history = [...messages];
+  let emptyRetries = 0;
+  let pseudoRetries = 0;
+  let nudgeMsg = null;
   for (let step = 0; step < maxSteps; step++) {
     signal?.throwIfAborted();
-    const data = await request(history);
+    const data = await request(nudgeMsg ? [...history, nudgeMsg] : history);
+    nudgeMsg = null;
     const msg = data?.choices?.[0]?.message;
     if (!msg || msg.role !== 'assistant') throw new Error('Invalid provider response');
     const calls = msg.tool_calls || [];
     if (!Array.isArray(calls) || calls.length > 16) throw new Error('Invalid tool calls');
+    if (!calls.length && looksLikePseudoToolCall(msg.content)) {
+      // Bespoke JSON tool-dialect reply: retry with a corrective nudge instead
+      // of surfacing the blob (or mis-executing it) — the model usually
+      // recovers to the proper tool channel or plain text after one nudge.
+      if (pseudoRetries++ < 2) {
+        nudgeMsg = { role: 'user', content: TOOL_CHANNEL_NUDGE };
+        onEvent('(tool-dialect reply, retrying with correction)');
+        continue;
+      }
+    }
     history = [...history, { role: 'assistant', content: msg.content || null, ...(calls.length ? { tool_calls: calls } : {}) }];
     onCheckpoint(history);
     if (!calls.length) {
-      if (typeof msg.content !== 'string' || !msg.content.trim()) throw new Error('Empty provider response');
+      if (typeof msg.content !== 'string' || !msg.content.trim()) {
+        // Small local models occasionally emit an empty final reply with no
+        // tool calls. Retry the step (history unchanged) before failing out.
+        if (emptyRetries++ < 2) { history = history.slice(0, -1); onEvent('(empty response, retrying)'); continue; }
+        throw new Error('Empty provider response');
+      }
       return { text: msg.content, messages: history };
     }
     for (const call of calls) {

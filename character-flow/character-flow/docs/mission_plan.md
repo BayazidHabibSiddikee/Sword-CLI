@@ -3,7 +3,7 @@
 ## Vision
 Build **Character Flow**: a philosopher-scholar AI character (Izuku Midoriya × Multi-Laws Wisdom)
 that answers questions, generates quotes/poetry/business ideas, and connects everything
-through universal laws — all served via a minimal FreeLLMAPI brain with a TUI chat client.
+through universal laws — all served via a minimal SwordCLI brain with a TUI chat client.
 
 ---
 
@@ -13,7 +13,7 @@ through universal laws — all served via a minimal FreeLLMAPI brain with a TUI 
 ┌─────────────────────────────────────────────────────────┐
 │                    CHARACTER FLOW                       │
 ├──────────────────┬──────────────────┬───────────────────┤
-│   TUI Client     │  freellmapi-     │  Brain Module     │
+│   TUI Client     │  swordcli-     │  Brain Module     │
 │  (npm run tui)   │  minimal         │  (izuku_char.js)  │
 │                  │  (port 7070)     │                   │
 │  • Keynav chat   │  • /v1/chat      │  • BM25 retrieval │
@@ -28,14 +28,14 @@ through universal laws — all served via a minimal FreeLLMAPI brain with a TUI 
 ## Phases
 
 ### Phase 1 — Foundation (CURRENT)
-- [x] Analyze source repos: marin, freellmapi, tools/, channels/
+- [x] Analyze source repos: marin, swordcli, tools/, channels/
 - [ ] Create `docs/mission_plan.md` ← THIS FILE
 - [ ] Create `docs/current_state.md`
 - [ ] Create `docs/gain.md`
-- [ ] Copy & slim freellmapi → `freellmapi-minimal/` (keys + usage pages only)
+- [ ] Copy & slim swordcli → `swordcli-minimal/` (keys + usage pages only)
 - [ ] Scaffold `character-flow/` project structure
 
-### Phase 2 — Brain (freellmapi-minimal)
+### Phase 2 — Brain (swordcli-minimal)
 - [ ] Remove all non-essential routes: debate, business, embeddings, playground, premium, responses
 - [ ] Keep only: `/v1/chat`, `/api/keys`, `/api/models`, `/api/health`, `/api/usage`
 - [ ] Keep client pages: KeysPage + UsagePage (rename Analytics → Usage)
@@ -51,7 +51,7 @@ through universal laws — all served via a minimal FreeLLMAPI brain with a TUI 
   - Business idea generator (law-backed concepts)
   - Philosophical answer engine (connects specific → universal)
 - [ ] Seed database with preloaded wisdom (20 quotes, 20 laws, 10 knowledge entries)
-- [ ] Wire brain into freellmapi-minimal as `/api/character/*` endpoints
+- [ ] Wire brain into swordcli-minimal as `/api/character/*` endpoints
 
 ### Phase 4 — TUI Client
 - [ ] Create `tui/client.js` — terminal UI using Ink or blessed
@@ -63,7 +63,7 @@ through universal laws — all served via a minimal FreeLLMAPI brain with a TUI 
 - [ ] Entry point: `npm run tui` from project root
 
 ### Phase 5 — Integration
-- [ ] TUI talks to freellmapi-minimal via `/v1/chat`
+- [ ] TUI talks to swordcli-minimal via `/v1/chat`
 - [ ] Character brain injects system prompt + BM25 context before each call
 - [ ] Quotes/poetry/ideas go through character endpoint directly
 - [ ] Database lives at `character-flow/data/knowledge.db`
@@ -78,7 +78,7 @@ through universal laws — all served via a minimal FreeLLMAPI brain with a TUI 
 ├── current_state.md         ← what's done / blocked / next
 ├── gain.md                  ← lessons learned, decisions made
 │
-├── freellmapi-minimal/      ← slimmed freellmapi (brain server)
+├── swordcli-minimal/      ← slimmed swordcli (brain server)
 │   ├── server/
 │   │   ├── src/routes/keys.ts          (keep)
 │   │   ├── src/routes/proxy.ts         (keep)
@@ -116,7 +116,7 @@ through universal laws — all served via a minimal FreeLLMAPI brain with a TUI 
 
 ## Key Decisions
 
-1. **No bulky deps** — freellmapi-minimal strips debate/business/embeddings/playground/premium entirely
+1. **No bulky deps** — swordcli-minimal strips debate/business/embeddings/playground/premium entirely
 2. **BM25 in JS** — port the Python BM25 from marin to JavaScript for the TUI client
 3. **SQLite primary, PG optional** — same schema as marin's izuku_character.py, works without Postgres
 4. **Character is a system-prompt injector** — it prepends the Izuku persona + retrieved context to every /v1/chat call
@@ -128,6 +128,6 @@ through universal laws — all served via a minimal FreeLLMAPI brain with a TUI 
 - None currently
 
 ## Next Immediate Actions
-1. Copy freellmapi → freellmapi-minimal/ and strip routes
+1. Copy swordcli → swordcli-minimal/ and strip routes
 2. Create brain/izuku_character.js (port from Python module)
 3. Build TUI prototype

@@ -77,7 +77,7 @@ Configuration: OPENAI_BASE_URL, OPENAI_API_KEY, OPENAI_MODEL; PROXY_HOST fallbac
 Model choice: --model, else SWORD_MODEL, else the strongest model the backend
 advertises, else backend auto-routing. The backend's balanced routing strategy
 picks much weaker models (flash-lite class), so SwordCLI selects a strong one.
-Default endpoint: http://localhost:3001/v1
+Default endpoint: http://localhost:3101/v1 (independent sword-server)
 Project content is sent to your chosen provider. Use only trusted workspaces.
 `;
 async function main() {
@@ -347,7 +347,7 @@ async function main() {
         const { listProviders, addProvider, removeProvider } = await import('./providers.js');
         if (!sub || sub === 'list' || sub === 'ls') {
           const custom = listProviders();
-          console.error(`\nProviders:\n  local   ${config.url || 'http://127.0.0.1:3001/v1'}\n  g4f     anonymous fallback\n  remote  SWORDCLI_BASE_URL / OPENAI_BASE_URL`);
+          console.error(`\nProviders:\n  local   ${config.url || 'http://127.0.0.1:3101/v1'}\n  g4f     anonymous fallback\n  remote  SWORDCLI_BASE_URL / OPENAI_BASE_URL`);
           if (custom.length) {
             for (const p of custom) console.error(`  custom  ${p.name} -> ${p.baseUrl} (model: ${p.model || 'default'})`);
           }
@@ -381,11 +381,24 @@ async function main() {
         continue;
       }
       if (line === '/web') {
-        const url = process.env.SWORD_WEB_URL || 'http://localhost:3002';
-        console.error(`Opening web portal: ${url}`);
+        // Prefer an explicit URL, else the unified web UI served by the Sword
+        // backend itself (same origin as /api + /v1, so no CORS split-brain).
+        // SWORD_WEB_PORT defaults to the independent web UI port (3002);
+        // sword-server itself is API-only on :3101.
+        const port = process.env.SWORD_WEB_PORT || '3002';
+        const url = process.env.SWORD_WEB_URL || `http://localhost:${port}`;
+        console.error(`Opening web UI: ${url} (backend also serves /v1 + /api/agent on this port)`);
         try {
-          const { execCommand } = await import('./tools.js');
-          await execCommand(`open "${url}" || xdg-open "${url}" || start "${url}"`);
+          // execCommand is internal-only; open the browser via a plain spawn.
+          const { spawn } = await import('node:child_process');
+          const opener = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open';
+          const args = process.platform === 'win32' ? ['/c', 'start', url] : [url];
+          await new Promise(resolve => {
+            const child = spawn(opener, args, { stdio: 'ignore', detached: true });
+            child.on('error', () => resolve());
+            child.unref();
+            setTimeout(resolve, 1500);
+          });
         } catch {
           console.error(`Open it manually: ${url}`);
         }

@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { PageHeader } from '@/components/page-header'
-import type { ApiKey, Platform } from '../../../shared/types'
+import type { ApiKey, Platform } from '@/shared/types'
 import { Pencil, ExternalLink } from 'lucide-react'
 import { formatSqliteUtcToLocalTime } from '@/lib/utils'
 

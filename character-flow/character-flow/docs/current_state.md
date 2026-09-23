@@ -6,7 +6,7 @@ _Last updated: 2025-09-14_
 
 ## Completed
 
-### ✅ freellmapi minimal (`freellmapi/`)
+### ✅ swordcli minimal (`swordcli/`)
 - Slimmed to: keys, models, proxy, health, analytics(→usage), settings, rate-limits
 - Added `/api/character/prompt`, `/api/character/quote/:theme`, `/api/character/laws`
 - Client: only Keys + Usage pages
@@ -45,7 +45,7 @@ Results deduplicated and re-ranked by weighted combination.
 │   ├── mission_plan.md
 │   ├── current_state.md
 │   └── gain.md
-├── freellmapi/              ← slimmed LLM proxy (port 3001)
+├── swordcli/              ← slimmed LLM proxy (port 3001)
 │   └── server/src/app.ts    ← keys/proxy/health + /api/character/*
 └── character-flow/          ← main product
     ├── brain/
@@ -67,7 +67,7 @@ Results deduplicated and re-ranked by weighted combination.
 
 ```bash
 # Terminal 1 — start shared server
-cd /home/sword/Documents/Characters/freellmapi
+cd /home/sword/Documents/Characters/swordcli
 npx tsx server/src/index.ts
 
 # Terminal 2a — Izuku
