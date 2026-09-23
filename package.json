@@ -28,6 +28,7 @@
     "node": ">=22"
   },
   "scripts": {
+    "sword": "node bin/sword --shared",
     "flow": "node cli/flow.js",
     "test": "node --experimental-test-module-mocks --test test/*.test.js",
     "test:coverage": "node --experimental-test-module-mocks --test --experimental-test-coverage --test-coverage-include='cli/*.js' test/*.test.js",

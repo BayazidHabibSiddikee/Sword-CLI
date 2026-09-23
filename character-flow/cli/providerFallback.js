@@ -118,5 +118,5 @@ export async function attemptFallback(prompt, opts = {}) {
 
   const reason = errors.map(e => `- ${e.provider}: ${e.error}`).join('\n') || 'unknown';
   // Offline fallback - provide a useful response without external API
-  return `[SwordCLI Offline Mode]\n\nYour prompt: "${prompt}"\n\nNo external LLM provider is available.\nTried:\n${reason}\n\nTo enable full AI capabilities:\n1. Start the local Sword backend: \`cd GET_API/server && npm run dev\` (port 3001)\n2. Or set OPENAI_BASE_URL and OPENAI_API_KEY to your provider\n3. Or set SWORDCLI_BASE_URL and SWORDCLI_TOKEN for a remote Sword backend\n4. Or set SWORD_FREE_FALLBACK_URL to an OpenAI-compatible free endpoint\n\nYou can still use local tools (file read/write, command execution, search) in the meantime.`;
+  return `[SwordCLI Offline Mode]\n\nYour prompt: "${prompt}"\n\nNo external LLM provider is available.\nTried:\n${reason}\n\nTo enable full AI capabilities:\n1. Start the local Sword backend: \`cd swordcli/server && npm run dev\` (port 3001)\n2. Or set OPENAI_BASE_URL and OPENAI_API_KEY to your provider\n3. Or set SWORDCLI_BASE_URL and SWORDCLI_TOKEN for a remote Sword backend\n4. Or set SWORD_FREE_FALLBACK_URL to an OpenAI-compatible free endpoint\n\nYou can still use local tools (file read/write, command execution, search) in the meantime.`;
 }

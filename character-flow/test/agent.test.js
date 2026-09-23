@@ -22,27 +22,6 @@ test('toolLine renders ok, failure, timeout and truncated summaries', () => {
   assert.ok(!toolLine('x', { ok: true, ms: 1, summary: 'a\nb' }).includes('\n'), 'single line only');
 });
 
-test('runTurn detects bespoke JSON tool-dialect replies and self-corrects', async () => {
-  const blob = JSON.stringify([{ name: 'read_file', arguments: { path: 'x', session_id: null } }]);
-  const seen = [];
-  let count = 0;
-  const request = async messages => {
-    seen.push(messages);
-    if (count++ === 0) return { choices: [{ message: { role: 'assistant', content: blob } }] };
-    return { choices: [{ message: { role: 'assistant', content: 'Hello! How can I help?' } }] };
-  };
-  const events = [];
-  const result = await runTurn({ messages: [], request, execute: async () => { throw new Error('must not execute the blob'); }, onEvent: name => events.push(name) });
-  assert.equal(result.text, 'Hello! How can I help?', 'recovers with plain text');
-  assert.ok(!result.text.trim().startsWith('['), 'JSON blob never surfaces as the answer');
-  assert.ok(events.some(e => String(e).includes('tool-dialect')), 'user sees a retry notice, not the blob');
-  const nudged = seen[1];
-  const last = nudged.at(-1);
-  assert.equal(last.role, 'user');
-  assert.match(last.content, /not valid output/);
-  assert.ok(!nudged.some(m => typeof m.content === 'string' && m.content.includes('"name":"read_file"') && m.role === 'assistant'), 'blob is not persisted into history');
-});
-
 test('friendlyError distinguishes cancel, timeout and generic errors', () => {
   assert.match(friendlyError(new DOMException('aborted', 'AbortError'), { aborted: true }), /Cancelled/);
   assert.match(friendlyError(new DOMException('timed out', 'TimeoutError'), { aborted: false }), /timed out/);

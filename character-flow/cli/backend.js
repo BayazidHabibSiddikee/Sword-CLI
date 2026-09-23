@@ -1,71 +1,21 @@
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { existsSync } from 'node:fs';
-import path from 'node:path';
-
-// Candidate DB locations, in priority order:
-//  1. SWORD_DB_FILE env override (explicit wins)
-//  2. <repo>/GET_API/server/data/freeapi.db  (this file lives at
-//     <repo>/character-flow/character-flow/cli/backend.js, so ../../../GET_API)
-//  3. Legacy/alternate checkouts that may hold the same unified key.
-const here = fileURLToPath(new URL('.', import.meta.url));
-
-function candidateDbPaths() {
-  const list = [];
-  if (process.env.SWORD_DB_FILE?.trim()) list.push(process.env.SWORD_DB_FILE.trim());
-  list.push(
-    path.resolve(here, '../../../sword-server/data/sword.db'),
-    '/home/sword/Documents/Characters/sword-server/data/sword.db',
-    path.resolve(here, '../../../GET_API/server/data/freeapi.db'),
-    '/home/sword/Documents/Characters/GET_API/server/data/freeapi.db',
-  );
-  return [...new Set(list)];
-}
 
 export function readLocalUnifiedKey() {
-  const require = createRequire(import.meta.url);
-  let Database;
+  const require = createRequire(new URL('../swordcli/server/package.json', import.meta.url));
+  let db;
   try {
-    Database = require('better-sqlite3');
-  } catch (err) {
-    console.error(`[backend] better-sqlite3 unavailable; falling back to g4f. (${err?.message ?? err})`);
+    const Database = require('better-sqlite3');
+    db = new Database(fileURLToPath(new URL('../swordcli/server/data/freeapi.db', import.meta.url)), {
+      readonly: true, fileMustExist: true
+    });
+    const value = db.prepare("SELECT value FROM settings WHERE key = 'unified_api_key'").get()?.value;
+    if (typeof value === 'string' && value.trim()) return value;
     return null;
-  }
-  const tried = [];
-  // swordcli (GET_API) is the primary backend — always check freeapi.db first.
-  const freeapiPaths = [
-    path.resolve(here, '../../../GET_API/server/data/freeapi.db'),
-    '/home/sword/Documents/Characters/GET_API/server/data/freeapi.db',
-    path.resolve(here, '../swordcli/server/data/freeapi.db'),
-  ];
-  for (const file of freeapiPaths) {
-    if (!existsSync(file)) { tried.push(`${file} (missing)`); continue; }
-    let db;
-    try {
-      db = new Database(file, { readonly: true, fileMustExist: true });
-      const value = db.prepare("SELECT value FROM settings WHERE key = 'unified_api_key'").get()?.value;
-      if (typeof value === 'string' && value.trim()) return value.trim();
-      tried.push(`${file} (no unified_api_key row)`);
-    } catch (err) {
-      tried.push(`${file} (${err?.message ?? err})`);
-    } finally { try { db?.close(); } catch { /* ignore */ } }
-  }
-  // Fallback to sword-server token if no swordcli DB is reachable.
-  const swordPaths = [
-    path.resolve(here, '../../../sword-server/data/sword.db'),
-    '/home/sword/Documents/Characters/sword-server/data/sword.db',
-  ];
-  for (const file of swordPaths) {
-    if (!existsSync(file)) continue;
-    let db;
-    try {
-      db = new Database(file, { readonly: true, fileMustExist: true });
-      const token = db.prepare("SELECT value FROM settings WHERE key = 'api_token'").get()?.value;
-      if (typeof token === 'string' && token.trim()) return token.trim();
-    } catch { /* ignore */ } finally { try { db?.close(); } catch { /* ignore */ } }
-  }
-  console.error(`[backend] Could not read local unified key; falling back to g4f. Tried: ${tried.join('; ')}`);
-  return null;
+  } catch (err) {
+    console.error(`[backend] Could not read local unified key; falling back to g4f. (${err?.message ?? err})`);
+    return null;
+  } finally { db?.close(); }
 }
 
 export async function configureSwordBackend(env, readKey = readLocalUnifiedKey, opts = {}) {
@@ -74,10 +24,8 @@ export async function configureSwordBackend(env, readKey = readLocalUnifiedKey, 
   if (!env.SWORDCLI_BASE_URL && (env.OPENAI_BASE_URL || env.PROXY_HOST)) return { ...env };
   const base = new URL(env.SWORDCLI_BASE_URL || 'http://127.0.0.1:3001/v1');
   if (base.username || base.password || base.search || base.hash) throw new Error('Backend URL must not contain credentials, query or fragment');
-  // Local backends: GET_API swordcli (:3001) — accept any loopback port so tests
-  // and custom deployments aren't hard-locked to a single port.
   const localBackend = base.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname)
-    && ['/', '/v1', '/v1/'].includes(base.pathname);
+    && base.port === '3001' && ['/', '/v1', '/v1/'].includes(base.pathname);
   if (!localBackend && !env.SWORDCLI_TOKEN) throw new Error('Set SWORDCLI_TOKEN for an explicitly configured backend; local credentials are never sent elsewhere.');
   if (!localBackend && base.protocol !== 'https:') throw new Error('Remote backends require HTTPS');
   const key = env.SWORDCLI_TOKEN || await readKey();

@@ -5,7 +5,7 @@ import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:http';
 
-const root = fileURLToPath(new URL('../../../', import.meta.url));
+const root = fileURLToPath(new URL('../', import.meta.url));
 async function sword(args, env = {}) {
   const child = spawn('npm', ['run', '--silent', 'sword', '--', ...args], {
     cwd: root, env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe']

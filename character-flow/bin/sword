@@ -1,0 +1,26 @@
+#!/usr/bin/env node
+// bin/sword — SwordCLI launcher
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const root = join(__dirname, '..');
+
+// The CLI lives at cli/flow.js
+const script = join(root, 'cli', 'flow.js');
+
+if (!existsSync(script)) {
+  console.error(`sword: Cannot find ${script}`);
+  process.exit(1);
+}
+
+const child = spawn(process.execPath, [script, ...process.argv.slice(2)], {
+  stdio: 'inherit',
+  cwd: process.cwd(),
+});
+
+child.on('exit', code => {
+  process.exitCode = code ?? 1;
+});

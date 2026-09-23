@@ -106,9 +106,12 @@ async function main() {
   } catch (err) {
     if (!interactive) throw err;
     useG4f = true;
-    swordEnv = { ...process.env, _swordG4fFallback: true };
+    swordEnv = { ...process.env, _swordG4fFallback: true, _swordG4fReason: err?.message ?? String(err) };
   }
-  if (useG4f && interactive) console.error('[SwordCLI] No Sword backend detected — using g4f (free) as provider.\n');
+  if (useG4f && interactive) {
+    const reason = swordEnv?._swordG4fReason ? ` (${swordEnv._swordG4fReason})` : '';
+    console.error(`[SwordCLI] No Sword backend detected${reason} — using g4f (free) as provider.\n`);
+  }
   const useShared = !values.local && !useG4f && (values.shared || Boolean(values['shared-session']));
   if ((useShared && values.session) || (values['import-session'] && (!values.shared || values['shared-session']))) throw new Error('Use --import-session NAME with --shared to copy a local session, not --session');
   const customProvider = await resolveCustomProvider(values.model, useG4f);

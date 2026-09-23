@@ -15,6 +15,10 @@ import {
   listSessions, createSession, getSession, patchSession, deleteSession,
   getMcpConfig, putMcpConfig, reloadMcp, streamMessage, listTools, listCharacters,
 } from '@/lib/agent'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
 
 // ---- Chat transcript state ----
 
@@ -84,6 +88,7 @@ export default function AgentPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [showNew, setShowNew] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  const [artifact, setArtifact] = useState<{ title: string, content: string, language?: string } | null>(null)
   const [transcript, setTranscript] = useState<TranscriptItem[]>([])
   const [draft, setDraft] = useState('')
   const [streaming, setStreaming] = useState(false)
@@ -259,7 +264,7 @@ export default function AgentPage() {
         }
       />
 
-      <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6">
+      <div className={`grid grid-cols-1 gap-6 transition-all ${artifact ? 'lg:grid-cols-[250px_1fr_1fr]' : 'lg:grid-cols-[280px_1fr]'}`}>
         {/* ---- Session list ---- */}
         <div className="space-y-3">
           <div className="rounded-3xl border bg-card p-3">
@@ -346,10 +351,40 @@ export default function AgentPage() {
               {transcript.map((item) => {
                 if (item.kind === 'assistant') {
                   const isUser = item.text.startsWith('You: ')
+                  const content = isUser ? item.text.slice(5) : item.text || (item.pending ? '…' : '')
                   return (
                     <div key={item.key}>
                       <div className={`text-xs mb-1 ${isUser ? 'text-muted-foreground' : 'text-blue-500'}`}>{isUser ? 'you' : 'agent'}</div>
-                      <div className="text-sm whitespace-pre-wrap">{isUser ? item.text.slice(5) : item.text || (item.pending ? '…' : '')}</div>
+                      <div className="text-sm">
+                        {isUser ? (
+                          <div className="whitespace-pre-wrap">{content}</div>
+                        ) : (
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm]}
+                            className="prose prose-sm dark:prose-invert max-w-none break-words"
+                            components={{
+                              code({ node, inline, className, children, ...props }: any) {
+                                const match = /language-(\w+)/.exec(className || '')
+                                return !inline && match ? (
+                                  <SyntaxHighlighter
+                                    {...props}
+                                    children={String(children).replace(/\n$/, '')}
+                                    style={vscDarkPlus}
+                                    language={match[1]}
+                                    PreTag="div"
+                                  />
+                                ) : (
+                                  <code {...props} className={className}>
+                                    {children}
+                                  </code>
+                                )
+                              }
+                            }}
+                          >
+                            {content}
+                          </ReactMarkdown>
+                        )}
+                      </div>
                     </div>
                   )
                 }
@@ -367,10 +402,15 @@ export default function AgentPage() {
                       {!item.result && streaming && <Loader2 className="size-3 animate-spin text-muted-foreground" />}
                     </div>
                     {item.result && (
-                      <details className="mt-1">
-                        <summary className="cursor-pointer text-muted-foreground">result</summary>
-                        <pre className="mt-1 text-[11px] whitespace-pre-wrap max-h-40 overflow-y-auto text-muted-foreground">{item.result.preview}</pre>
-                      </details>
+                      <div className="mt-1 flex items-start justify-between gap-2">
+                        <details className="flex-1">
+                          <summary className="cursor-pointer text-muted-foreground">result</summary>
+                          <pre className="mt-1 text-[11px] whitespace-pre-wrap max-h-40 overflow-y-auto text-muted-foreground">{item.result.preview}</pre>
+                        </details>
+                        <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => setArtifact({ title: item.name, content: item.result!.preview, language: 'json' })}>
+                          View
+                        </Button>
+                      </div>
                     )}
                   </div>
                 )
@@ -398,6 +438,25 @@ export default function AgentPage() {
             </div>
           </div>
         </div>
+
+        {/* ---- Artifact Panel ---- */}
+        {artifact && (
+          <div className="rounded-3xl border bg-card flex flex-col min-h-[420px] max-h-[60vh] overflow-hidden shadow-lg">
+            <div className="px-4 py-2 border-b flex items-center justify-between bg-muted/30">
+              <span className="text-xs font-medium truncate flex-1">{artifact.title}</span>
+              <Button variant="ghost" size="sm" onClick={() => setArtifact(null)}><X className="size-3.5" /></Button>
+            </div>
+            <div className="flex-1 overflow-y-auto bg-[#1E1E1E]">
+              <SyntaxHighlighter
+                children={artifact.content}
+                style={vscDarkPlus}
+                language={artifact.language || 'text'}
+                PreTag="div"
+                customStyle={{ margin: 0, background: 'transparent', fontSize: '12px' }}
+              />
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

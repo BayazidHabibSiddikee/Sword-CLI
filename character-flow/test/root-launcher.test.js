@@ -5,7 +5,7 @@ import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:http';
 
-const root = fileURLToPath(new URL('../../../', import.meta.url));
+const root = fileURLToPath(new URL('../../', import.meta.url));
 async function sword(args, env = {}) {
   const child = spawn('npm', ['run', '--silent', 'sword', '--', ...args], {
     cwd: root, env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe']
@@ -47,10 +47,6 @@ test('root launcher preserves project cwd and forwards task arguments', async t 
   const result = await sword(['--mode', 'marketing-video', '--prompt', 'Plan a campaign', '--json'], {
     OPENAI_BASE_URL: `http://127.0.0.1:${server.address().port}/v1`, OPENAI_API_KEY: '', OPENAI_MODEL: 'fixture'
   });
-  if (process.env.DEBUG_LAUNCHER) {
-    console.error('DEBUG-STDERR:', result.stderr.slice(0, 3000));
-    console.error('DEBUG-STDOUT:', result.stdout.slice(0, 1000));
-  }
   assert.equal(result.code, 0, result.stderr);
   assert.equal(JSON.parse(result.stdout).response, 'Launcher works');
   assert.ok(received.messages[0].content.includes(`Project directory: ${root.replace(/\/$/, '')}\n`));

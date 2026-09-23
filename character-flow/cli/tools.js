@@ -1,8 +1,10 @@
 import { lstat, readFile, readdir, mkdir, writeFile, realpath } from 'node:fs/promises';
-import { resolve, relative, sep, dirname } from 'node:path';
+import { resolve, relative, sep, join, dirname } from 'node:path';
 import { spawn } from 'node:child_process';
+import { fetchWeb, fetchWebRendered } from './webFetch.js';
 
 const LIMIT = 64000;
+const PDF_LIMIT = 32 * 1024 * 1024;
 const blocked = name => name.startsWith('.') || ['node_modules', 'dist', 'build'].includes(name) || /\.(pem|key|db)$/i.test(name);
 const string = { type: 'string' };
 const definition = (name, description, properties, required = []) => ({ type: 'function', function: {
@@ -14,11 +16,21 @@ export const toolDefinitions = [
   definition('search_files', 'Search literal text across project files.', { query: string }, ['query']),
   definition('write_file', 'Create or overwrite text with approval; read existing files first.', { path: string, content: string }, ['path', 'content']),
   definition('edit_file', 'Replace exactly one occurrence in a previously read file with approval.', { path: string, old_text: string, new_text: string }, ['path', 'old_text', 'new_text']),
-  definition('run_command', 'Run executable and arguments with approval. No shell parsing; NOT sandboxed.', { command: string, args: { type: 'array', items: string } }, ['command', 'args'])
+  definition('run_command', 'Run executable and arguments with approval. No shell parsing; NOT sandboxed.', { command: string, args: { type: 'array', items: string } }, ['command', 'args']),
+  definition('save_to_rag', 'Save a durable note to this project\'s memory (.flow/rag.db) for later sessions. Requires approval.', { category: string, title: string, content: string }, ['category', 'title', 'content']),
+  definition('read_pdf', 'Extract bounded text from a PDF inside the project before summarizing it.', { path: string, max_pages: { type: 'integer' } }, ['path']),
+  definition('fetch_web', 'Fetch a public web page over HTTP and return readable Markdown. Fast; cannot execute JavaScript.', { url: string, max_chars: { type: 'integer' } }, ['url']),
+  definition('fetch_web_rendered', 'Render a JavaScript-heavy or bot-protected public page with a stealth browser (slower) and return Markdown.', { url: string, max_chars: { type: 'integer' }, timeout_ms: { type: 'integer' } }, ['url'])
 ];
 function text(value, label, empty = false) {
   if (typeof value !== 'string' || (!empty && !value.length) || value.length > LIMIT || value.includes('\0')) throw new Error(`Invalid ${label}`);
   return value;
+}
+
+function bounded(value, min, max, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.min(Math.max(Math.trunc(number), min), max);
 }
 
 export function createTools({ cwd, approve = async () => false, signal, timeout = 30000 }) {
@@ -92,6 +104,38 @@ export function createTools({ cwd, approve = async () => false, signal, timeout 
     snapshots = new Map([...snapshots, [full, after]]);
     return { path: full, bytes: Buffer.byteLength(after) };
   }
+  async function saveToRag(args) {
+    const category = text(args.category, 'category');
+    const title = text(args.title, 'title');
+    const content = text(args.content, 'content', true);
+    await mkdir(join(root, '.flow'), { recursive: true, mode: 0o700 });
+    await permit({ tool: 'save_to_rag', path: join('.flow', 'rag.db'), category, title });
+    const { RagEngine } = await import('../brain/rag.js');
+    const engine = new RagEngine(join(root, '.flow', 'rag.db'));
+    try {
+      const id = engine.insertKnowledge(category.slice(0, 120), title.slice(0, 300), content, 'swordcli');
+      return { saved: true, id: Number(id), category: category.slice(0, 120), path: join('.flow', 'rag.db') };
+    } finally {
+      try { engine.db?.close(); } catch { /* best effort */ }
+    }
+  }
+
+  async function readPdf(args) {
+    const full = await checked(text(args.path, 'path'));
+    const info = await lstat(full);
+    if (!info.isFile() || info.size > PDF_LIMIT) throw new Error('PDF must be a regular file under 32 MB');
+    const pages = bounded(args.max_pages, 1, 200, 20);
+    const { PDFParse } = await import('pdf-parse');
+    const parser = new PDFParse({ data: await readFile(full) });
+    try {
+      const result = await parser.getText({ first: pages });
+      const content = typeof result?.text === 'string' ? result.text : '';
+      return { path: full, pages: Number(result?.total) || 0, read_pages: pages, text: content.slice(0, LIMIT), truncated: content.length > LIMIT };
+    } finally {
+      try { await parser.destroy?.(); } catch { /* best effort */ }
+    }
+  }
+
   return async (name, input) => {
     signal?.throwIfAborted();
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid tool arguments');
@@ -122,6 +166,21 @@ export function createTools({ cwd, approve = async () => false, signal, timeout 
       args.args.forEach(arg => text(arg, 'argument', true));
       await permit({ tool: name, cwd: root, command: args.command, args: args.args });
       return command(args, root, signal, timeout);
+    }
+    if (name === 'save_to_rag') return saveToRag(args);
+    if (name === 'read_pdf') return readPdf(args);
+    if (name === 'fetch_web') {
+      const result = await fetchWeb(text(args.url, 'url'), {
+        maxChars: bounded(args.max_chars, 500, 60000, 12000), signal
+      });
+      return { ...result, note: 'Plain HTTP fetch; JavaScript-rendered content may be missing. Use fetch_web_rendered if incomplete.' };
+    }
+    if (name === 'fetch_web_rendered') {
+      const result = await fetchWebRendered(text(args.url, 'url'), {
+        maxChars: bounded(args.max_chars, 500, 60000, 12000),
+        timeoutMs: bounded(args.timeout_ms, 10000, 180000, timeout), signal
+      });
+      return { ...result, note: 'Rendered with the stealth Camoufox browser.' };
     }
     throw new Error(`Unknown tool: ${name}`);
   };

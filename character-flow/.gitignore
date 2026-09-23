@@ -14,6 +14,7 @@
 **/pids/
 **/logs/
 **/*.log
+**/.sword/
 
 # Secrets / env
 **/.env
@@ -40,9 +41,3 @@ Thumbs.db
 swordcli/server/data/
 swordcli/pids/
 swordcli/logs/
-swordcli/decrypt.js
-swordcli/update_hermes.js
-swordcli/.env
-swordcli/**/*.db
-swordcli/**/*.db-shm
-swordcli/**/*.db-wal

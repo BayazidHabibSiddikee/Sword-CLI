@@ -5,7 +5,7 @@ import { configureSwordBackend } from '../cli/backend.js';
 test('default Sword uses local unified key instead of inherited provider key', async () => {
   const env = { OPENAI_API_KEY: 'unrelated-provider-secret' };
   const result = await configureSwordBackend(env, async () => 'local-unified-key');
-  assert.equal(result.OPENAI_BASE_URL, 'http://127.0.0.1:3101/v1');
+  assert.equal(result.OPENAI_BASE_URL, 'http://127.0.0.1:3001/v1');
   assert.equal(result.OPENAI_API_KEY, 'local-unified-key');
   assert.equal(env.OPENAI_API_KEY, 'unrelated-provider-secret');
 });

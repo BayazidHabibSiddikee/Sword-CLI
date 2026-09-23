@@ -137,7 +137,14 @@ async function main() {
   let spinner = null;
   let active;
   let teamMode = Boolean(values.team);
-  const cancel = () => { if (active) active.abort(); else rl?.close(); };
+  const cancel = () => { 
+    if (active) active.abort(); 
+    else if (rl) {
+      console.error('\n(Type /exit to quit)');
+      // Give them a fresh prompt line if they were typing
+      rl.write(null, { ctrl: true, name: 'u' }); 
+    }
+  };
   process.on('SIGINT', cancel);
   rl?.on('SIGINT', cancel);
   async function turn(prompt) {
@@ -346,7 +353,7 @@ async function main() {
         console.error('Conversation cleared.');
         continue;
       }
-      if (line === '/providers' || line === '/provider') {
+      if (line.startsWith('/providers') || line.startsWith('/provider')) {
         const parts = line.split(/\s+/);
         const sub = parts[1] || '';
         const { listProviders, addProvider, removeProvider } = await import('./providers.js');

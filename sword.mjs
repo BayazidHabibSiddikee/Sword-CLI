@@ -1,17 +1,21 @@
 #!/usr/bin/env node
 // sword — unified SwordCLI launcher (runs from Characters/ root).
 //
-// Ensures the stack is up before dropping into the agent:
-//   1. sword-server (independent minimal backend, /v1 + /api on :3101)
-//   2. web UI        (GET_API/client vite dev on :3002, proxies /api+/v1 → :3001)
-//   3. agent         (character-flow CLI, tools + approvals + sessions)
+// Ensures the whole stack is up before dropping into the agent:
+//   1. freeapi       (GET_API/server on :3001 — web UI backend AND cloud provider
+//                     registered into sword-server for failover)
+//   2. sword-server  (independent minimal backend, /v1 + /api on :3101)
+//   3. web UI        (GET_API/client vite dev on :3002, proxies /api+/v1 → :3001)
+//   4. agent         (character-flow CLI, tools + approvals + sessions)
+//   + ollama         (OPTIONAL local engine on :11434 — only started when
+//                     SWORD_START_OLLAMA=1; your API keys cover chat either way)
 //
-// GET_API/server on :3001 stays available as a fallback backend; the launcher
-// only starts it when sword-server is unavailable.
+// If sword-server can't come up, the launcher points the CLI straight at
+// freeapi :3001 instead.
 //
 // Usage: ./sword.mjs [agent args...] | ./sword.mjs up|down|status|logs|web|backend
 import { spawn, execSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, openSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -19,7 +23,7 @@ const ROOT = dirname(fileURLToPath(import.meta.url));
 const SWORD_SERVER_DIR = join(ROOT, 'sword-server');
 const BACKEND_DIR = join(ROOT, 'GET_API', 'server');
 const WEB_DIR = join(ROOT, 'GET_API', 'client');
-const AGENT_JS = join(ROOT, 'character-flow', 'character-flow', 'cli', 'flow.js');
+const AGENT_JS = join(ROOT, 'cli', 'flow.js');
 const PID_DIR = join(ROOT, '.sword');
 const API_PORT = process.env.SWORD_API_PORT || '3101';      // independent sword-server
 const BACKEND_PORT = process.env.SWORD_BACKEND_PORT || '3001'; // legacy GET_API fallback
@@ -29,13 +33,19 @@ const WEB_PORT = process.env.SWORD_WEB_PORT || '3002';
 function swordToken() {
   if (process.env.SWORD_TOKEN?.trim()) return process.env.SWORD_TOKEN.trim();
   try {
-    return execSync(`sqlite3 ${join(SWORD_SERVER_DIR, 'data', 'sword.db')} "SELECT value FROM settings WHERE key='api_token';"`, { encoding: 'utf8' }).trim();
+    // -readonly + a busy timeout: this read races the server's own writes on
+    // boot, and a bare `database is locked` failure here silently drops the
+    // token — which sends the agent into g4f fallback with no explanation.
+    return execSync(`sqlite3 -readonly -cmd \".timeout 2000\" ${join(SWORD_SERVER_DIR, 'data', 'sword.db')} "SELECT value FROM settings WHERE key='api_token';"`, { encoding: 'utf8' }).trim();
   } catch { return ''; }
 }
 
 function pidFile(name) { return join(PID_DIR, `${name}.pid`); }
 function readPid(name) {
-  try { return Number(readFileSync(pidFile(name), 'utf8').trim()); } catch { return null; }
+  try {
+    const n = Number(readFileSync(pidFile(name), 'utf8').trim());
+    return Number.isInteger(n) && n > 0 ? n : null; // empty/0-byte pid files → null
+  } catch { return null; }
 }
 function alive(pid) {
   if (!pid) return false;
@@ -79,26 +89,24 @@ function npmBin() { return process.platform === 'win32' ? 'npm.cmd' : 'npm'; }
 async function ensureBackend() {
   // Primary: the independent sword-server on :3101 (plain node, no build step).
   const apiUp = await portOpen(API_PORT, '/health');
-  if (!apiUp) {
-    const pid = readPid('sword-server');
-    if (!alive(pid)) {
-      if (!existsSync(join(SWORD_SERVER_DIR, 'package.json'))) throw new Error(`sword-server missing: ${SWORD_SERVER_DIR}`);
-      mkdirSync(PID_DIR, { recursive: true });
-      const out = await import('node:fs').then(fs => fs.openSync(join(PID_DIR, 'sword-server.log'), 'a'));
-      const child = spawn(process.execPath, ['src/index.js'], {
-        cwd: SWORD_SERVER_DIR, detached: true, stdio: ['ignore', out, out],
-        env: { ...process.env, SWORD_PORT: API_PORT, HOST: '127.0.0.1' },
-      });
-      child.unref();
-      writeFileSync(pidFile('sword-server'), String(child.pid));
-    }
-    for (let i = 0; i < 20; i++) {
-      await new Promise(r => setTimeout(r, 1000));
-      if (await portOpen(API_PORT, '/health')) break;
-    }
-    if (!(await portOpen(API_PORT, '/health'))) throw new Error(`sword-server did not come up on :${API_PORT}`);
+  if (apiUp) return 'already-running';
+  const pid = readPid('sword-server');
+  if (!alive(pid)) {
+    if (!existsSync(join(SWORD_SERVER_DIR, 'package.json'))) throw new Error(`sword-server missing: ${SWORD_SERVER_DIR}`);
+    mkdirSync(PID_DIR, { recursive: true });
+    const out = openSync(join(PID_DIR, 'sword-server.log'), 'a');
+    const child = spawn(process.execPath, ['src/index.js'], {
+      cwd: SWORD_SERVER_DIR, detached: true, stdio: ['ignore', out, out],
+      env: { ...process.env, SWORD_PORT: API_PORT, HOST: '127.0.0.1' },
+    });
+    child.unref();
+    writeFileSync(pidFile('sword-server'), String(child.pid));
   }
-  return 'already-running';
+  for (let i = 0; i < 20; i++) {
+    if (i > 0) await new Promise(r => setTimeout(r, 1000));
+    if (await portOpen(API_PORT, '/health')) return 'started';
+  }
+  throw new Error(`sword-server did not come up on :${API_PORT}`);
 }
 
 /** Legacy GET_API backend on :3001 — started on demand as a fallback only. */
@@ -117,8 +125,9 @@ async function ensureLegacyBackend() {
   if (alive(pid)) return 'already-running';
   if (!existsSync(join(BACKEND_DIR, 'package.json'))) throw new Error(`backend missing: ${BACKEND_DIR}`);
   mkdirSync(PID_DIR, { recursive: true });
+  const out = openSync(join(PID_DIR, 'backend.log'), 'a');
   const child = spawn(npmBin(), ['run', 'dev'], {
-    cwd: BACKEND_DIR, detached: true, stdio: ['ignore', 'ignore', 'ignore'],
+    cwd: BACKEND_DIR, detached: true, stdio: ['ignore', out, out],
     env: { ...process.env, PORT: BACKEND_PORT, HOST: '127.0.0.1' },
   });
   child.unref();
@@ -148,6 +157,90 @@ async function ensureWeb() {
   return 'starting';
 }
 
+async function ensureOllama() {
+  // OPTIONAL — the freeapi cloud provider covers chat on its own, so Ollama is
+  // not started unless SWORD_START_OLLAMA=1. If an Ollama instance is already
+  // up (yours), it's detected and left alone; its provider rows simply fail
+  // over to freeapi while it's down.
+  if (await portOpen(11434, '/')) return 'already-running';
+  if (!/^(1|true|yes|on)$/i.test(process.env.SWORD_START_OLLAMA || '')) return 'skipped';
+  let bin = '';
+  try { bin = execSync('command -v ollama', { encoding: 'utf8' }).trim(); } catch { /* not installed */ }
+  if (!bin) return 'not-installed';
+  mkdirSync(PID_DIR, { recursive: true });
+  const out = openSync(join(PID_DIR, 'ollama.log'), 'a');
+  const child = spawn(bin, ['serve'], { detached: true, stdio: ['ignore', out, out] });
+  child.unref();
+  writeFileSync(pidFile('ollama'), String(child.pid));
+  for (let i = 0; i < 20; i++) {
+    if (i > 0) await new Promise(r => setTimeout(r, 500));
+    if (await portOpen(11434, '/')) return 'started';
+  }
+  return 'failed';
+}
+
+function warnMissingOllamaModels() {
+  try {
+    const lines = execSync('ollama list', { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
+    if (lines.length <= 1) console.error('[sword] ollama has no local models — run: ollama pull qwen2.5:1.5b');
+  } catch { /* list failed — the freeapi failover still covers chat */ }
+}
+
+/** Read a single scalar from a local sqlite DB (best-effort, busy-timeout). */
+function sqliteOne(dbPath, sql) {
+  try {
+    return execSync(`sqlite3 -readonly -cmd ".timeout 2000" '${dbPath}' "${sql}"`, { encoding: 'utf8' }).trim();
+  } catch { return ''; }
+}
+
+async function freeapiKeyWorks(key) {
+  try {
+    const r = await fetch(`http://127.0.0.1:${BACKEND_PORT}/v1/models`, {
+      headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(2500),
+    });
+    if (r.status === 401 || r.status === 403) return false;
+    return r.status < 500;
+  } catch { return null; }
+}
+
+/** Pick the unified key that the LIVE freeapi backend on :3001 actually accepts. */
+async function localFreeapiKey() {
+  const dbs = [
+    join(ROOT, 'GET_API', 'server', 'data', 'freeapi.db'),
+    join(ROOT, 'character-flow', 'swordcli', 'server', 'data', 'freeapi.db'),
+  ];
+  const keys = [];
+  for (const db of dbs) {
+    if (!existsSync(db)) continue;
+    const k = sqliteOne(db, "SELECT value FROM settings WHERE key='unified_api_key';");
+    if (k && !keys.includes(k)) keys.push(k);
+  }
+  for (const k of keys) if (await freeapiKeyWorks(k)) return k;
+  return keys[0] || '';
+}
+
+/**
+ * Register the local freeapi backend as a sword-server provider so chat
+ * completions fail over to the 273-model cloud catalog when local Ollama can't
+ * answer. sword-server reads the providers table live — no restart needed.
+ */
+async function registerLocalProvider() {
+  const db = join(SWORD_SERVER_DIR, 'data', 'sword.db');
+  if (!existsSync(db)) return 'no-sword-db';
+  const key = await localFreeapiKey();
+  if (!key) return 'no-key';
+  const base = `http://127.0.0.1:${BACKEND_PORT}/v1`;
+  const safeKey = key.replace(/'/g, "''");
+  try {
+    execSync(
+      `sqlite3 -cmd ".timeout 2000" '${db}' "DELETE FROM providers WHERE name='local-freeapi' OR base_url='${base}';` +
+      ` INSERT INTO providers(name, base_url, api_key, model) VALUES('local-freeapi','${base}','${safeKey}','');"`,
+      { stdio: 'ignore' }
+    );
+    return 'registered';
+  } catch { return 'failed'; }
+}
+
 function stop(name) {
   const pid = readPid(name);
   if (pid && alive(pid)) {
@@ -160,22 +253,29 @@ function stop(name) {
 
 const cmd = process.argv[2];
 if (cmd === 'up') {
-  console.log(`sword-server :${API_PORT} ... ${await ensureBackend()}`);
-  console.log(`web          :${WEB_PORT} ... ${await ensureWeb()}`);
+  const ollama = await ensureOllama().catch(e => `FAILED: ${e.message}`);
+  if (ollama === 'started' || ollama === 'already-running') warnMissingOllamaModels();
+  const legacy = await ensureLegacyBackend().catch(e => `FAILED: ${e.message}`);
+  console.log(`ollama        ... ${ollama}`);
+  console.log(`freeapi :${BACKEND_PORT}  ... ${legacy}`);
+  if (!String(legacy).startsWith('FAILED')) console.log(`provider      ... ${await registerLocalProvider().catch(() => 'failed')}`);
+  console.log(`sword-server :${API_PORT} ... ${await ensureBackend().catch(e => `FAILED: ${e.message}`)}`);
+  console.log(`web          :${WEB_PORT} ... ${await ensureWeb().catch(() => 'skipped')}`);
   process.exit(0);
 }
-if (cmd === 'down') { stop('web'); stop('sword-server'); stop('backend'); process.exit(0); }
+if (cmd === 'down') { stop('web'); stop('sword-server'); stop('backend'); stop('ollama'); process.exit(0); }
 if (cmd === 'status') {
   const apiOk = await portOpen(API_PORT, '/health');
   const b = await backendInfo(BACKEND_PORT);
-  console.log(`sword-server :${API_PORT} health=${apiOk ? 'ok' : 'down'} pid=${readPid('sword-server')}`);
-  console.log(`legacy-api   :${BACKEND_PORT} open=${b.open} models=${b.hasModels} agent=${b.hasAgent} pid=${readPid('backend')}`);
-  console.log(`web          :${WEB_PORT} open=${await portOpen(WEB_PORT, '/')} pid=${readPid('web')}`);
+  console.log(`ollama        :11434 open=${await portOpen(11434, '/')} pid=${readPid('ollama') ?? '-'}`);
+  console.log(`freeapi       :${BACKEND_PORT} open=${b.open} models=${b.hasModels} agent=${b.hasAgent} pid=${readPid('backend') ?? '-'}`);
+  console.log(`sword-server :${API_PORT} health=${apiOk ? 'ok' : 'down'} pid=${readPid('sword-server') ?? '-'}`);
+  console.log(`web          :${WEB_PORT} open=${await portOpen(WEB_PORT, '/')} pid=${readPid('web') ?? '-'}`);
   console.log(`agent        : ${AGENT_JS} ${existsSync(AGENT_JS) ? '(found)' : '(MISSING)'}`);
   process.exit(0);
 }
 if (cmd === 'logs') {
-  for (const f of ['sword-server.log', 'backend.log', 'web.log']) {
+  for (const f of ['ollama.log', 'sword-server.log', 'backend.log', 'web.log']) {
     try { console.log(`--- ${f} ---`); console.log(readFileSync(join(PID_DIR, f), 'utf8').slice(-2000)); }
     catch { console.log(`--- ${f}: (none) ---`); }
   }
@@ -223,20 +323,33 @@ if (cmd === 'models') {
   process.exit(0);
 }
 
-// default: full agent run — ensure sword-server, then exec the CLI.
-// If sword-server can't come up, fall back to the legacy GET_API stack on :3001.
+// default: full agent run — bring up every background service, then exec the CLI.
+//   ollama  → sword-server's native providers (qwen2.5 / marin-tools)
+//   freeapi → web UI backend on :3001 AND registered into sword-server as the
+//             cloud failover provider, so chat keeps working when the local
+//             engine is down or has no models pulled.
+// If sword-server itself can't come up, point the CLI straight at freeapi :3001.
+const ollamaState = await ensureOllama().catch(e => `FAILED: ${e.message}`);
+if (ollamaState === 'started' || ollamaState === 'already-running') warnMissingOllamaModels();
+const legacyState = await ensureLegacyBackend().catch(e => `FAILED: ${e.message}`);
+if (!String(legacyState).startsWith('FAILED')) {
+  const reg = await registerLocalProvider().catch(() => 'failed');
+  if (reg !== 'registered') console.error(`[sword] local freeapi provider not registered (${reg})`);
+}
 let backendState = await ensureBackend().catch(e => `FAILED: ${e.message}`);
 let backendPort = API_PORT;
 if (String(backendState).startsWith('FAILED')) {
-  console.error(`[sword] sword-server ${backendState} — trying legacy backend :${BACKEND_PORT}`);
-  backendState = await ensureLegacyBackend().catch(e => `FAILED: ${e.message}`);
+  console.error(`[sword] sword-server ${backendState} — pointing agent at freeapi :${BACKEND_PORT}`);
+  backendState = legacyState;
   backendPort = BACKEND_PORT;
 }
 const webState = await ensureWeb().catch(() => 'skipped');
+console.error(
+  `[sword] ollama (${ollamaState}) · freeapi :${BACKEND_PORT} (${legacyState}) · ` +
+  `backend :${backendPort} (${backendState}) · web :${WEB_PORT} (${webState})`
+);
 if (String(backendState).startsWith('FAILED')) {
-  console.error(`[sword] backend ${backendState} — agent will use g4f fallback`);
-} else {
-  console.error(`[sword] backend :${backendPort} (${backendState}) · web :${WEB_PORT} (${webState})`);
+  console.error('[sword] no local backend reachable — agent will use g4f fallback');
 }
 const args = process.argv.slice(2);
 if (!existsSync(AGENT_JS)) { console.error(`[sword] agent missing: ${AGENT_JS}`); process.exit(1); }

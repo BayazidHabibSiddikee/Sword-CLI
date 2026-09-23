@@ -1,86 +1,100 @@
-# Current State — Character Flow
+# Current State — Character Flow (LangGraph Agentic AI)
 
 _Last updated: 2025-09-14_
 
 ---
 
-## Completed
+## Architecture: LangGraph-Powered Agentic AI
 
-### ✅ swordcli minimal (`swordcli/`)
-- Slimmed to: keys, models, proxy, health, analytics(→usage), settings, rate-limits
-- Added `/api/character/prompt`, `/api/character/quote/:theme`, `/api/character/laws`
-- Client: only Keys + Usage pages
+Each character is now a **stateful, multi-turn agentic AI** powered by [LangGraph](https://langchain-ai.github.io/langgraph/) v1.4:
 
-### ✅ Shared RAG Engine (`brain/rag.js`)
-Three-tier hybrid retrieval, identical for both characters:
-1. **BM25** — Okapi keyword relevance (pure JS)
-2. **SQLite FTS5** — full-text search via virtual tables
-3. **TF-IDF Cosine** — vector similarity over term-frequency vectors
-Results deduplicated and re-ranked by weighted combination.
+```
+START → llm_node → [has tool_calls?] → tool_node → llm_node → … → END
+              ↓                            ↑
+         MemorySaver checkpoint         (loops until no more tools)
+```
 
-### ✅ Character 1: Izuku Midoriya
-- `brain/izuku.js` — persona, generators, system prompt
-- `tui_izuku.js` — readline TUI (cyan/green palette)
-- Commands: `/quote` `/poem` `/idea` `/laws` `/search` `/status`
-- DB: `data/knowledge.db` (40 quotes, 10 knowledge)
-
-### ✅ Character 2: Mahina Artemis
-- `brain/mahina.js` — Makima-coded persona, manipulation/dance/gym generators
-- `tui_mahina.js` — readline TUI (pink/purple palette)
-- Commands: `/quote` `/dance` `/gym` `/analyze` `/idea` `/laws` `/search` `/status`
-- DB: `data/mahina_knowledge.db` (27 quotes, 10 knowledge)
-
-### ✅ Documentation
-- `docs/mission_plan.md`, `docs/current_state.md`, `docs/gain.md`
-- `character-flow/README.md` — run guide
+### Key Features
+- **Multi-turn memory**: Conversations persist across turns via `MemorySaver` checkpointing
+- **Tool calling**: LLM decides WHEN to use tools, HOW many times, in what order
+- **Streaming**: Real-time chunk output via `/stream` command
+- **Human-in-the-loop**: `interrupt()` support for pause/resume workflows
+- **State graph**: Each character has its own `StateGraph` with typed state
 
 ---
 
-## Final Structure
+## Dependencies Added
+```json
+"@langchain/langgraph": "^1.4.15",
+"@langchain/core": "^0.3.x",
+"@langchain/openai": "^0.4.x"
+```
 
-```
-/home/sword/Documents/Characters/
-├── README.md
-├── docs/
-│   ├── mission_plan.md
-│   ├── current_state.md
-│   └── gain.md
-├── swordcli/              ← slimmed LLM proxy (port 3001)
-│   └── server/src/app.ts    ← keys/proxy/health + /api/character/*
-└── character-flow/          ← main product
-    ├── brain/
-    │   ├── rag.js            ← SHARED: BM25 + FTS5 + TF-IDF cosine
-    │   ├── izuku.js          ← Izuku persona + generators
-    │   ├── mahina.js         ← Mahina persona + generators
-    │   ├── seed_izuku.js     ← seeds knowledge.db
-    │   └── seed_mahina.js    ← seeds mahina_knowledge.db
-    ├── tui_izuku.js          ← Izuku TUI
-    ├── tui_mahina.js         ← Mahina TUI
-    └── data/
-        ├── knowledge.db      ← Izuku: 40 quotes, 10 knowledge
-        └── mahina_knowledge.db ← Mahina: 27 quotes, 10 knowledge
-```
+## The Bridge: `skills/bridge.js`
+22 real tools calling `~/Documents/projects/tools/` Python scripts + live APIs:
+- Crypto/Stock prices (CoinGecko, Yahoo Finance)
+- Web search (DuckDuckGo via knowledge_hub.py)
+- Math (SymPy via python3 -c)
+- Code execution (Python, Node.js, Shell)
+- Documents (PDF/DOCX/XLSX conversion)
+- Translation (MyMemory API)
+- File operations (read/write/list/search)
+
+---
+
+## 10 Characters (All LangGraph-Powered)
+
+| # | Name | Role | Specialized Skills | Total Tools |
+|---|------|------|--------------------|------------|
+| 1 | Izuku Midoriya | Hero philosopher | web search, books, quotes | 4 |
+| 2 | Mahina Artemis | Strategist | manipulation, dance, gym | 4 |
+| 3 | Muhan Haswaz | Math prof/trader | crypto, stocks, news | 4 |
+| 4 | Plastos Jiade | War reporter | crash analysis, debunking | 4 |
+| 5 | Monk Maecenas | Religious scholar | stories, cross-reference | 4 |
+| 6 | Prince Rishad | Manga/novel lover | manga DB, novel DB, comedy | 4 |
+| 7 | **Turing Voss** ⭐ | Logic puzzle master | judge_solution, benchmark_algorithm, solve_math, generate_problem, analyze_complexity | **27** |
+| 8 | **Sable Chen** ⭐ | Pragmatic engineer | git_log, git_diff, analyze_log, generate_cicd, code_review, project_structure | **28** |
+| 9 | **Dr. Ada Vance** ⭐ | Computational mathematician | compute_symbolic, compile_latex, verify_proof_step, generate_math_doc | **26** |
+| 10 | **Kael Vector** ⭐ | ML engineer/architect | train_model_script, calculate_metrics, preprocess_data, analyze_dataset, compare_architectures | **27** |
 
 ---
 
 ## How to Run
 
 ```bash
-# Terminal 1 — start shared server
-cd /home/sword/Documents/Characters/swordcli
-npx tsx server/src/index.ts
-
-# Terminal 2a — Izuku
 cd /home/sword/Documents/Characters/character-flow
-npm run izuku
 
-# Terminal 2b — Mahina
-npm run mahina
+# Start swordcli proxy first
+cd ../swordcli && npx tsx server/src/index.ts
+
+# Then in another terminal:
+npm run turing   # LangGraph agent — logic, algorithms, code execution
+npm run sable    # LangGraph agent — git ops, CI/CD, code review
+npm run ada      # LangGraph agent — symbolic math, LaTeX, proofs
+npm run kael     # LangGraph agent — ML training, metrics, pipelines
+
+# In-chat commands:
+#   /tools     — list all available skills
+#   /stream    — stream mode (real-time chunks)
+#   /stats     — show knowledge base stats
+#   /clear     — reset conversation memory
 ```
 
 ---
 
 ## Verified Working
-- Both TUIs connect to proxy, load brains, run all commands
-- Hybrid RAG returns ranked results from all 3 tiers
-- No extra directories, flat structure as requested
+- ✅ LangGraph StateGraph with MessagesAnnotation
+- ✅ MemorySaver checkpointing (multi-turn memory works)
+- ✅ Tool calling via OpenAI-compatible API (proxy handles auth)
+- ✅ All 4 new characters have 26-28 tools each
+- ✅ Streaming works (yields node-level chunks)
+- ✅ Real data: live Bitcoin price ($77k), AAPL ($332), web search, Python execution
+- ✅ Multi-tool chains: "Get BTC price AND translate to Japanese" works in one turn
+- ✅ 47 JS files, 10 SQLite databases, all committed and pushed
+
+## Recent Updates
+- Integrated React Markdown, Syntax Highlighting, and Claude-style Artifact panel in the web UI.
+- Renamed internal `freellmapi` package to `swordcli`.
+- Added gTTS voice notifications for tool approvals and task completions.
+- Fixed non-interactive CLI background execution by introducing an `--auto-approve` flag.
+- Configured Izuku as the default persona for coding mode.

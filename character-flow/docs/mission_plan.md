@@ -131,3 +131,12 @@ through universal laws — all served via a minimal SwordCLI brain with a TUI ch
 1. Copy swordcli → swordcli-minimal/ and strip routes
 2. Create brain/izuku_character.js (port from Python module)
 3. Build TUI prototype
+
+### Phase 6 — Polish & CLI Improvements (Completed)
+- [x] Integrate g4f as fallback provider
+- [x] Rename freellmapi to swordcli for consistent branding
+- [x] Add React Markdown & Syntax Highlighting to Web UI
+- [x] Add Artifact side panel to Web UI for code/file previews
+- [x] Implement gTTS and play-sound for audio notifications (start/complete)
+- [x] Add `--auto-approve` flag to fix background headless CLI execution
+- [x] Set Izuku as the default persona for coding mode in the CLI
