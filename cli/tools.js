@@ -140,9 +140,9 @@ export function createTools({ cwd, approve = async () => false, signal, timeout 
     signal?.throwIfAborted();
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid tool arguments');
     const args = structuredClone(input);
-    if (name === 'list_files') return { files: await files(args.path), limit: 500 };
+    if (name === 'list_files') return { files: await files(args.path ?? '.'), limit: 500 };
     if (name === 'read_file') {
-      const full = await checked(text(args.path, 'path'));
+      const full = await checked(text(args.path ?? '.', 'path'));
       const content = await read(full);
       snapshots = new Map([...snapshots, [full, content]]);
       return { path: full, content };

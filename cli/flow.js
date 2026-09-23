@@ -323,7 +323,11 @@ async function main() {
     console.error(`/help for commands. Ctrl+C cancels the current turn.`);
     while (!rl.closed) {
       let line;
-      try { line = (await rl.question('\nsword> ')).trim(); } catch (err) { console.error('Question err:', err); break; }
+      try { line = (await rl.question('\nsword> ')).trim(); } catch (err) {
+        console.error(`\nReadline error: ${err.message}. Continuing...`);
+        await new Promise(r => setTimeout(r, 100));
+        continue;
+      }
       if (!line) continue;
       if (line === '/exit' || line === '/quit') break;
       if (line === '/help') { console.error(HELP + `\n/status  Show session, model, cwd and history.\n/team    Toggle round-robin team discussion mode (10 agents + writer)`); continue; }
@@ -349,7 +353,8 @@ async function main() {
         console.error('Conversation cleared.');
         continue;
       }
-      if (line === '/providers' || line === '/provider') {
+      if (line.startsWith('/providers') || line.startsWith('/provider')) {
+        const parts = line.split(/\s+/);
         const sub = parts[1] || '';
         const { listProviders, addProvider, removeProvider } = await import('./providers.js');
         if (!sub || sub === 'list' || sub === 'ls') {
