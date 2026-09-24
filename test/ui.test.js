@@ -2,8 +2,45 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   markdownLite, safe, banner, statusLine, approvePrompt, closestCommand,
-  cancelMessage, timeoutMessage, toolLine, friendlyError
+  cancelMessage, timeoutMessage, toolLine, friendlyError, thinkingIndicator
 } from '../cli/ui.js';
+
+function collector() {
+  const chunks = [];
+  return { stream: { write: text => chunks.push(text) }, text: () => chunks.join('') };
+}
+
+test('thinkingIndicator writes one plain line and no cursor escapes', () => {
+  const sink = collector();
+  const indicator = thinkingIndicator(sink.stream);
+  indicator.start();
+  indicator.start();                       // starting twice must not stack lines
+  assert.equal(sink.text(), 'Thinking…');
+  indicator.stop();
+  indicator.stop();                        // stopping twice must not stack newlines
+  assert.equal(sink.text(), 'Thinking…\n');
+  assert.ok(!/\x1b/.test(sink.text()), 'the indicator must not emit ANSI escapes');
+  assert.ok(!sink.text().includes('\r'), 'the indicator must not move the cursor');
+});
+
+test('thinkingIndicator can be reused for a second turn', () => {
+  const sink = collector();
+  const indicator = thinkingIndicator(sink.stream);
+  indicator.start();
+  indicator.stop();
+  indicator.start();
+  indicator.stop();
+  assert.equal(sink.text(), 'Thinking…\nThinking…\n');
+});
+
+test('friendlyError reports any user-cancelled turn as Cancelled', () => {
+  assert.match(friendlyError(new Error('Action denied by user'), { aborted: true }), /Cancelled/);
+  const flagged = new Error('Action denied by user');
+  flagged.abortedByUser = true;
+  assert.match(friendlyError(flagged, { aborted: false }), /Cancelled/);
+  // A plain error is still reported as an error.
+  assert.match(friendlyError(new Error('HTTP 500'), { aborted: false }), /HTTP 500/);
+});
 
 test('cancelMessage and timeoutMessage are stable identifiers', () => {
   assert.match(cancelMessage(), /Cancelled/);
