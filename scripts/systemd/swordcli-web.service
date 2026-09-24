@@ -1,0 +1,17 @@
+[Unit]
+Description=SwordCLI web UI (swordcli/client dev server on :3002, proxies /api+/v1 → :3001)
+After=swordcli-api.service
+Wants=swordcli-api.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Documents/Characters/swordcli/client
+ExecStart=%h/Documents/Characters/swordcli/node_modules/.bin/vite --port 3002 --strictPort
+Environment=PORT=3001
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:%h/Documents/Characters/.sword/web.log
+StandardError=append:%h/Documents/Characters/.sword/web.log
+
+[Install]
+WantedBy=default.target

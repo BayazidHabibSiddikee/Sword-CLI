@@ -1,0 +1,21 @@
+[Unit]
+# The project's own API background — replaces the freellmapi/GET_API stack.
+Description=SwordCLI API (swordcli/server on :3001 — /v1 proxy, /api/sword sessions)
+After=network-online.target
+Wants=network-online.target
+Conflicts=sword-legacy.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Documents/Characters/swordcli/server
+ExecStart=%h/Documents/Characters/swordcli/node_modules/.bin/tsx watch src/index.ts
+Environment=PORT=3001
+Environment=HOST=127.0.0.1
+Environment=NODE_ENV=development
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:%h/Documents/Characters/.sword/swordcli.log
+StandardError=append:%h/Documents/Characters/.sword/swordcli.log
+
+[Install]
+WantedBy=default.target

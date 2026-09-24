@@ -1,32 +1,37 @@
 #!/usr/bin/env node
 // sword — unified SwordCLI launcher (runs from Characters/ root).
 //
-// Ensures the whole stack is up before dropping into the agent:
-//   1. freeapi       (GET_API/server on :3001 — web UI backend AND cloud provider
-//                     registered into sword-server for failover)
-//   2. sword-server  (independent minimal backend, /v1 + /api on :3101)
-//   3. web UI        (GET_API/client vite dev on :3002, proxies /api+/v1 → :3001)
-//   4. agent         (character-flow CLI, tools + approvals + sessions)
+// Everything it starts lives inside this repository — no freellmapi / GET_API:
+//   1. swordcli API   (swordcli/server on :3001 — this project's own API background:
+//                     /v1 chat proxy + provider catalog, /api/sword shared sessions,
+//                     /api/keys, /api/agent, SQLite at swordcli/server/data/freeapi.db)
+//   2. sword-server   (sword-server on :3101 — plain-node minimal API, no install step;
+//                     used automatically when the swordcli workspace is not installed)
+//   3. web UI         (swordcli/client vite dev on :3002, proxies /api+/v1 → the API)
+//   4. agent          (cli/flow.js — tools + approvals + sessions)
 //   + ollama         (OPTIONAL local engine on :11434 — only started when
 //                     SWORD_START_OLLAMA=1; your API keys cover chat either way)
 //
-// If sword-server can't come up, the launcher points the CLI straight at
-// freeapi :3001 instead.
+// The swordcli API is a TypeScript workspace, so it needs its dependencies once:
+//   npm install --prefix swordcli
+// Until then the launcher starts sword-server on :3101 and the agent still works.
 //
-// Usage: ./sword.mjs [agent args...] | ./sword.mjs up|down|status|logs|web|backend
+// Usage: ./sword.mjs [agent args...] | ./sword.mjs up|down|status|logs|web|backend|api
 import { spawn, execSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, openSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
+const SWORDCLI_DIR = join(ROOT, 'swordcli');
+const SWORDCLI_SERVER_DIR = join(SWORDCLI_DIR, 'server');
+const SWORDCLI_CLIENT_DIR = join(SWORDCLI_DIR, 'client');
 const SWORD_SERVER_DIR = join(ROOT, 'sword-server');
-const BACKEND_DIR = join(ROOT, 'GET_API', 'server');
-const WEB_DIR = join(ROOT, 'GET_API', 'client');
+const WEB_DIR = SWORDCLI_CLIENT_DIR;
 const AGENT_JS = join(ROOT, 'cli', 'flow.js');
 const PID_DIR = join(ROOT, '.sword');
-const API_PORT = process.env.SWORD_API_PORT || '3101';      // independent sword-server
-const BACKEND_PORT = process.env.SWORD_BACKEND_PORT || '3001'; // legacy GET_API fallback
+const API_PORT = process.env.SWORD_API_PORT || '3101';             // sword-server (no install)
+const SWORDCLI_PORT = process.env.SWORD_BACKEND_PORT || '3001';   // swordcli API background
 const WEB_PORT = process.env.SWORD_WEB_PORT || '3002';
 
 /** Sword-server API token: env first, then the token it minted into its sqlite settings. */
@@ -109,34 +114,60 @@ async function ensureBackend() {
   throw new Error(`sword-server did not come up on :${API_PORT}`);
 }
 
-/** Legacy GET_API backend on :3001 — started on demand as a fallback only. */
-async function ensureLegacyBackend() {
-  const info = await backendInfo(BACKEND_PORT);
-  if (info.hasAgent || info.hasModels) return 'already-running';
-  if (info.open && !info.hasAgent && !info.hasModels) {
-    const pid = readPid('backend');
-    if (alive(pid)) { try { process.kill(pid, 'SIGTERM'); } catch {} }
+/** This project's own API background — swordcli/server on :3001. */
+/** Is the swordcli API ours? Either this launcher started it, or the repo's systemd unit does. */
+function swordcliManaged() {
+  if (alive(readPid('swordcli'))) return true;
+  try { return execSync('systemctl --user is-active swordcli-api.service', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim() === 'active'; }
+  catch { return false; }
+}
+
+async function ensureSwordcliApi() {
+  // This project's own API background: swordcli/server on :3001.
+  const info = await backendInfo(SWORDCLI_PORT);
+  if (info.hasAgent || info.hasModels || info.hasSword) {
+    // Reuse whatever API is on the port, but say so when neither this launcher
+    // nor the repo's systemd unit started it — a leftover process from another
+    // project (e.g. freellmapi) must not masquerade as the swordcli API.
+    if (!swordcliManaged()) {
+      console.error(`[sword] an API already serves :${SWORDCLI_PORT} (not started by ./sword.mjs or swordcli-api.service) — reusing it`);
+    }
+    return 'already-running';
+  }
+  if (!existsSync(join(SWORDCLI_SERVER_DIR, 'package.json'))) return 'swordcli-missing';
+  if (!existsSync(join(SWORDCLI_DIR, 'node_modules', '.bin', 'tsx'))) {
+    // A TypeScript workspace needs its dependencies once. Say so instead of
+    // failing: the launcher falls back to sword-server on :3101.
+    return 'needs `npm install --prefix swordcli`';
+  }
+  const pid = readPid('swordcli');
+  if (alive(pid)) {
+    // A live pid with nothing listening means a half-started or crashed service
+    // (e.g. it booted before its native deps were built). Clear it out instead
+    // of reporting a false "already-running".
+    try { process.kill(pid, 'SIGTERM'); } catch {}
+    try { execSync(`pkill -P ${pid} 2>/dev/null`); } catch {}
+    await new Promise(r => setTimeout(r, 500));
+  }
+  if (info.open) {
     throw new Error(
-      `port :${BACKEND_PORT} is held by a process that is NOT the Sword backend ` +
-      `(no /v1/models). Find it with: ss -ltnp | grep ${BACKEND_PORT} → kill <pid>, ` +
+      `port :${SWORDCLI_PORT} is held by something that is NOT the swordcli API ` +
+      `(no /v1/models, /api/agent or /api/sword). Find it with: ss -ltnp | grep ${SWORDCLI_PORT} → kill <pid>, ` +
       `then run: ./sword.mjs up`);
   }
-  const pid = readPid('backend');
-  if (alive(pid)) return 'already-running';
-  if (!existsSync(join(BACKEND_DIR, 'package.json'))) throw new Error(`backend missing: ${BACKEND_DIR}`);
   mkdirSync(PID_DIR, { recursive: true });
-  const out = openSync(join(PID_DIR, 'backend.log'), 'a');
-  const child = spawn(npmBin(), ['run', 'dev'], {
-    cwd: BACKEND_DIR, detached: true, stdio: ['ignore', out, out],
-    env: { ...process.env, PORT: BACKEND_PORT, HOST: '127.0.0.1' },
+  const out = openSync(join(PID_DIR, 'swordcli.log'), 'a');
+  const child = spawn(npmBin(), ['run', 'dev', '-w', 'server'], {
+    cwd: SWORDCLI_DIR, detached: true, stdio: ['ignore', out, out],
+    env: { ...process.env, PORT: SWORDCLI_PORT, HOST: '127.0.0.1', NODE_ENV: 'development' },
   });
   child.unref();
-  writeFileSync(pidFile('backend'), String(child.pid));
+  writeFileSync(pidFile('swordcli'), String(child.pid));
   for (let i = 0; i < 45; i++) {
     await new Promise(r => setTimeout(r, 1000));
-    if (await portOpen(BACKEND_PORT, '/v1/models')) return 'started';
+    if (await portOpen(SWORDCLI_PORT, '/api/health')) return 'started';
   }
-  throw new Error(`backend did not come up on :${BACKEND_PORT}`);
+  return 'starting (see .sword/swordcli.log)';
 }
 
 async function ensureWeb() {
@@ -144,9 +175,12 @@ async function ensureWeb() {
   const pid = readPid('web');
   if (alive(pid)) return 'already-running';
   if (!existsSync(join(WEB_DIR, 'package.json'))) return 'no-web-dir';
+  if (!existsSync(join(SWORDCLI_DIR, 'node_modules', '.bin', 'vite'))) return 'needs `npm install --prefix swordcli`';
   mkdirSync(PID_DIR, { recursive: true });
   const child = spawn(npmBin(), ['exec', 'vite', '--port', WEB_PORT, '--strictPort'], {
     cwd: WEB_DIR, detached: true, stdio: ['ignore', 'ignore', 'ignore'],
+    // The client proxies /api and /v1 to PORT — keep both on the swordcli API.
+    env: { ...process.env, PORT: SWORDCLI_PORT },
   });
   child.unref();
   writeFileSync(pidFile('web'), String(child.pid));
@@ -193,9 +227,9 @@ function sqliteOne(dbPath, sql) {
   } catch { return ''; }
 }
 
-async function freeapiKeyWorks(key) {
+async function swordcliKeyWorks(key) {
   try {
-    const r = await fetch(`http://127.0.0.1:${BACKEND_PORT}/v1/models`, {
+    const r = await fetch(`http://127.0.0.1:${SWORDCLI_PORT}/v1/models`, {
       headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(2500),
     });
     if (r.status === 401 || r.status === 403) return false;
@@ -203,38 +237,32 @@ async function freeapiKeyWorks(key) {
   } catch { return null; }
 }
 
-/** Pick the unified key that the LIVE freeapi backend on :3001 actually accepts. */
-async function localFreeapiKey() {
-  const dbs = [
-    join(ROOT, 'GET_API', 'server', 'data', 'freeapi.db'),
-    join(ROOT, 'character-flow', 'swordcli', 'server', 'data', 'freeapi.db'),
-  ];
-  const keys = [];
-  for (const db of dbs) {
-    if (!existsSync(db)) continue;
-    const k = sqliteOne(db, "SELECT value FROM settings WHERE key='unified_api_key';");
-    if (k && !keys.includes(k)) keys.push(k);
-  }
-  for (const k of keys) if (await freeapiKeyWorks(k)) return k;
-  return keys[0] || '';
+/** Pick the unified key that the LIVE swordcli API on :3001 actually accepts. */
+async function localSwordcliKey() {
+  const db = join(SWORDCLI_SERVER_DIR, 'data', 'freeapi.db');
+  if (!existsSync(db)) return '';
+  const key = sqliteOne(db, "SELECT value FROM settings WHERE key='unified_api_key';");
+  if (key && (await swordcliKeyWorks(key)) === false) return '';
+  return key || '';
 }
 
 /**
- * Register the local freeapi backend as a sword-server provider so chat
- * completions fail over to the 273-model cloud catalog when local Ollama can't
- * answer. sword-server reads the providers table live — no restart needed.
+ * Register the local swordcli API as a sword-server provider so chat
+ * completions fail over to it (and its provider catalog) when the local Ollama
+ * providers can't answer. sword-server reads the providers table live — no
+ * restart needed.
  */
-async function registerLocalProvider() {
+async function registerSwordcliProvider() {
   const db = join(SWORD_SERVER_DIR, 'data', 'sword.db');
   if (!existsSync(db)) return 'no-sword-db';
-  const key = await localFreeapiKey();
+  const key = await localSwordcliKey();
   if (!key) return 'no-key';
-  const base = `http://127.0.0.1:${BACKEND_PORT}/v1`;
+  const base = `http://127.0.0.1:${SWORDCLI_PORT}/v1`;
   const safeKey = key.replace(/'/g, "''");
   try {
     execSync(
-      `sqlite3 -cmd ".timeout 2000" '${db}' "DELETE FROM providers WHERE name='local-freeapi' OR base_url='${base}';` +
-      ` INSERT INTO providers(name, base_url, api_key, model) VALUES('local-freeapi','${base}','${safeKey}','');"`,
+      `sqlite3 -cmd ".timeout 2000" '${db}' "DELETE FROM providers WHERE name='local-swordcli' OR base_url='${base}';` +
+      ` INSERT INTO providers(name, base_url, api_key, model) VALUES('local-swordcli','${base}','${safeKey}','');"`,
       { stdio: 'ignore' }
     );
     return 'registered';
@@ -255,33 +283,34 @@ const cmd = process.argv[2];
 if (cmd === 'up') {
   const ollama = await ensureOllama().catch(e => `FAILED: ${e.message}`);
   if (ollama === 'started' || ollama === 'already-running') warnMissingOllamaModels();
-  const legacy = await ensureLegacyBackend().catch(e => `FAILED: ${e.message}`);
+  const api = await ensureSwordcliApi().catch(e => `FAILED: ${e.message}`);
   console.log(`ollama        ... ${ollama}`);
-  console.log(`freeapi :${BACKEND_PORT}  ... ${legacy}`);
-  if (!String(legacy).startsWith('FAILED')) console.log(`provider      ... ${await registerLocalProvider().catch(() => 'failed')}`);
+  console.log(`swordcli API :${SWORDCLI_PORT}  ... ${api}`);
+  if (api === 'started' || api === 'already-running') console.log(`provider      ... ${await registerSwordcliProvider().catch(() => 'failed')}`);
   console.log(`sword-server :${API_PORT} ... ${await ensureBackend().catch(e => `FAILED: ${e.message}`)}`);
   console.log(`web          :${WEB_PORT} ... ${await ensureWeb().catch(() => 'skipped')}`);
   process.exit(0);
 }
-if (cmd === 'down') { stop('web'); stop('sword-server'); stop('backend'); stop('ollama'); process.exit(0); }
+if (cmd === 'down') { stop('web'); stop('swordcli'); stop('sword-server'); stop('ollama'); process.exit(0); }
 if (cmd === 'status') {
   const apiOk = await portOpen(API_PORT, '/health');
-  const b = await backendInfo(BACKEND_PORT);
+  const b = await backendInfo(SWORDCLI_PORT);
   console.log(`ollama        :11434 open=${await portOpen(11434, '/')} pid=${readPid('ollama') ?? '-'}`);
-  console.log(`freeapi       :${BACKEND_PORT} open=${b.open} models=${b.hasModels} agent=${b.hasAgent} pid=${readPid('backend') ?? '-'}`);
-  console.log(`sword-server :${API_PORT} health=${apiOk ? 'ok' : 'down'} pid=${readPid('sword-server') ?? '-'}`);
-  console.log(`web          :${WEB_PORT} open=${await portOpen(WEB_PORT, '/')} pid=${readPid('web') ?? '-'}`);
+  console.log(`swordcli API  :${SWORDCLI_PORT} open=${b.open} models=${b.hasModels} agent=${b.hasAgent} sword=${b.hasSword} pid=${readPid('swordcli') ?? '-'}`);
+  console.log(`sword-server  :${API_PORT} health=${apiOk ? 'ok' : 'down'} pid=${readPid('sword-server') ?? '-'}`);
+  console.log(`web           :${WEB_PORT} open=${await portOpen(WEB_PORT, '/')} pid=${readPid('web') ?? '-'}`);
   console.log(`agent        : ${AGENT_JS} ${existsSync(AGENT_JS) ? '(found)' : '(MISSING)'}`);
   process.exit(0);
 }
 if (cmd === 'logs') {
-  for (const f of ['ollama.log', 'sword-server.log', 'backend.log', 'web.log']) {
+  for (const f of ['ollama.log', 'sword-server.log', 'swordcli.log', 'web.log']) {
     try { console.log(`--- ${f} ---`); console.log(readFileSync(join(PID_DIR, f), 'utf8').slice(-2000)); }
     catch { console.log(`--- ${f}: (none) ---`); }
   }
   process.exit(0);
 }
 if (cmd === 'backend') { console.log(`sword-server: ${await ensureBackend()}`); process.exit(0); }
+if (cmd === 'api') { console.log(`swordcli API: ${await ensureSwordcliApi()}`); process.exit(0); }
 if (cmd === 'web') { console.log(`web: ${await ensureWeb()}`); process.exit(0); }
 
 // ---- powerful agent subcommands (backend-native, no extra deps) ----
@@ -324,48 +353,57 @@ if (cmd === 'models') {
 }
 
 // default: full agent run — bring up every background service, then exec the CLI.
-//   ollama  → sword-server's native providers (qwen2.5 / marin-tools)
-//   freeapi → web UI backend on :3001 AND registered into sword-server as the
-//             cloud failover provider, so chat keeps working when the local
-//             engine is down or has no models pulled.
-// If sword-server itself can't come up, point the CLI straight at freeapi :3001.
+//   ollama      → sword-server's native providers (qwen2.5 / marin-tools)
+//   swordcli    → this repo's own API on :3001 (the agent's first choice, and the
+//                 web UI's backend); also registered into sword-server as the
+//                 failover provider so chat survives a local engine that is down.
+//   sword-server → the no-install minimal API on :3101 (used when the swordcli
+//                 workspace isn't installed).
+// If neither API is reachable the agent falls back to g4f.
 const ollamaState = await ensureOllama().catch(e => `FAILED: ${e.message}`);
 if (ollamaState === 'started' || ollamaState === 'already-running') warnMissingOllamaModels();
-const legacyState = await ensureLegacyBackend().catch(e => `FAILED: ${e.message}`);
-if (!String(legacyState).startsWith('FAILED')) {
-  const reg = await registerLocalProvider().catch(() => 'failed');
-  if (reg !== 'registered') console.error(`[sword] local freeapi provider not registered (${reg})`);
+const apiState = await ensureSwordcliApi().catch(e => `FAILED: ${e.message}`);
+if (apiState === 'started' || apiState === 'already-running') {
+  const reg = await registerSwordcliProvider().catch(() => 'failed');
+  if (reg !== 'registered') console.error(`[sword] local swordcli provider not registered (${reg})`);
+} else if (String(apiState).startsWith('needs')) {
+  console.error(`[sword] swordcli API not installed (${apiState.trim()}) — using sword-server :${API_PORT}`);
 }
 let backendState = await ensureBackend().catch(e => `FAILED: ${e.message}`);
 let backendPort = API_PORT;
-if (String(backendState).startsWith('FAILED')) {
-  console.error(`[sword] sword-server ${backendState} — pointing agent at freeapi :${BACKEND_PORT}`);
-  backendState = legacyState;
-  backendPort = BACKEND_PORT;
+let backendKey = TOKEN;
+const swordcliReady = apiState === 'started' || apiState === 'already-running';
+if (swordcliReady) {
+  // The project's own API is the agent's first choice.
+  backendState = apiState;
+  backendPort = SWORDCLI_PORT;
+  backendKey = await localSwordcliKey();
+} else if (String(backendState).startsWith('FAILED')) {
+  console.error(`[sword] sword-server ${backendState} — no local API available, agent will use g4f fallback`);
+  backendState = 'FAILED';
 }
 const webState = await ensureWeb().catch(() => 'skipped');
 console.error(
-  `[sword] ollama (${ollamaState}) · freeapi :${BACKEND_PORT} (${legacyState}) · ` +
-  `backend :${backendPort} (${backendState}) · web :${WEB_PORT} (${webState})`
+  `[sword] ollama (${ollamaState}) · swordcli :${SWORDCLI_PORT} (${apiState}) · ` +
+  `sword-server :${API_PORT} (${await portOpen(API_PORT, '/health') ? 'ok' : 'down'}) · web :${WEB_PORT} (${webState})`
 );
 if (String(backendState).startsWith('FAILED')) {
-  console.error('[sword] no local backend reachable — agent will use g4f fallback');
+  console.error('[sword] no local API reachable — agent will use g4f fallback');
 }
 const args = process.argv.slice(2);
 if (!existsSync(AGENT_JS)) { console.error(`[sword] agent missing: ${AGENT_JS}`); process.exit(1); }
 const userHasEndpoint = Boolean(process.env.OPENAI_BASE_URL || process.env.PROXY_HOST);
+const noApi = String(backendState).startsWith('FAILED');
 const child = spawn(process.execPath, [AGENT_JS, ...args], {
   stdio: 'inherit', cwd: process.cwd(),
   env: {
     ...process.env,
     // Don't clobber a caller-provided OPENAI_BASE_URL (tests / custom routers);
-    // only inject the sword-server endpoint when the user hasn't chosen one.
-    ...(userHasEndpoint ? {} : { SWORDCLI_BASE_URL: `http://127.0.0.1:${backendPort}/v1` }),
-    // Attach the sword-server token only when we're pointing the CLI at
-    // sword-server; other backends manage their own auth (SWORDCLI_ENDPOINT).
-    ...(!userHasEndpoint && backendPort === API_PORT
-      ? (TOKEN ? { SWORDCLI_TOKEN: TOKEN } : {})
-      : (!userHasEndpoint ? { SWORDCLI_ENDPOINT: `http://127.0.0.1:${backendPort}/v1` } : {})),
+    // only inject our own endpoint when the user hasn't chosen one.
+    ...(userHasEndpoint || noApi ? {} : { SWORDCLI_BASE_URL: `http://127.0.0.1:${backendPort}/v1` }),
+    // Both local APIs authenticate with a key minted into their own SQLite DB,
+    // read here at boot so nothing has to be exported by hand.
+    ...(!userHasEndpoint && !noApi && backendKey ? { SWORDCLI_TOKEN: backendKey } : {}),
   },
 });
 child.on('exit', c => { process.exitCode = c ?? 1; });

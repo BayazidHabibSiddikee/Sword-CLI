@@ -2,13 +2,10 @@ import { createRequire } from 'node:module';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-// Local backend databases that may hold the CLI's credential. Historically only
-// swordcli/server was probed — a checkout with no data/ dir — so a perfectly
-// healthy backend on :3001 was reported as "no backend" and the CLI silently
-// dropped to g4f. Ordered by how likely each is to match the target port.
+// Local API databases that may hold the CLI's credential. Every candidate is
+// inside this repository (the swordcli API background and the plain-node
+// sword-server), so a fresh clone never depends on an external project.
 const FREEAPI_DBS = [
-  '../character-flow/swordcli/server/data/freeapi.db',
-  '../GET_API/server/data/freeapi.db',
   '../swordcli/server/data/freeapi.db',
 ];
 const SWORD_SERVER_DB = '../sword-server/data/sword.db';

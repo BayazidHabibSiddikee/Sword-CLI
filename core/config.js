@@ -3,11 +3,15 @@
  *
  * Resolves the API key WITHOUT hardcoding it:
  *   1. env OPENAI_API_KEY
- *   2. CLI reads the local Sword backend unified key from
- *      `GET_API/server/data/freeapi.db` in `cli/backend.js`
+ *   2. CLI reads the local Sword API unified key from the in-tree databases in
+ *      `cli/backend.js` (swordcli/server/data/freeapi.db, sword-server/data/sword.db)
  */
 
-const SWORD_DATA_DIR = '/home/sword/Documents/Characters/character-flow/character-flow/GET_API/server/data';
+// Both local APIs live in this repository — no external project is required.
+export const LOCAL_API_DATA_DIRS = [
+  'swordcli/server/data',
+  'sword-server/data'
+];
 
 export const CONFIG = {
   /** Base URL of the local Sword backend OpenAI-compatible proxy. */
