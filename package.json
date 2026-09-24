@@ -34,23 +34,22 @@
     "test:coverage": "node --experimental-test-module-mocks --test --experimental-test-coverage --test-coverage-include='cli/*.js' test/*.test.js",
     "flow:agent": "node cli/flow.js",
     "flow:web": "npm run dev --prefix web",
-    "flow:server": "node server.js",
-    "flow:all": "npm run flow:server &",
+    "api": "./sword.mjs api",
+    "stack:up": "./sword.mjs up",
+    "stack:down": "./sword.mjs down",
+    "stack:status": "./sword.mjs status",
     "seed": "node brain/seed_izuku.js",
     "seed:all": "node brain/seed_izuku.js && node brain/seed_mahina.js && node brain/seed_muhan.js && node brain/seed_plastos.js && node brain/seed_monk.js && node brain/seed_prince.js && node brain/seed_turing.js && node brain/seed_sable.js && node brain/seed_ada.js && node brain/seed_kael.js",
-    "postinstall": "node scripts/patch-langchain.js",
     "ci": "npm run test:coverage && echo '=== /home/sword refs ===' && grep -rn '/home/sword' scraper/ || true && echo '=== npm pack dry-run ===' && npm pack --dry-run | grep -vE '^$' && echo 'CI OK'"
   },
   "dependencies": {
     "@gpt4free/g4f.dev": "^1.1.2",
     "@langchain/core": "^1.2.11",
     "@langchain/langgraph": "^1.4.15",
-    "@langchain/openai": "^0.5.0",
+    "@langchain/openai": "^1.5.13",
     "better-sqlite3": "^12.11.1",
     "chalk": "^5.3.0",
-    "ffaivideo": "^1.9.5",
     "g4f": "^1.4.6",
-    "gtts": "^0.2.1",
     "mammoth": "^1.12.3",
     "ora": "^8.0.1",
     "pdf-parse": "^2.4.5",
@@ -58,22 +57,30 @@
     "uuid": "^14.0.2"
   },
   "devDependencies": {
+    "ffaivideo": "^1.9.5",
     "tsx": "^4.19.0"
+  },
+  "comments": {
+    "dependencies": "gtts was removed: cli/tts.js never generated playable audio (it only rang the terminal bell), and it pulled a critical form-data advisory with no upstream fix. ffaivideo moved to devDependencies: no runtime code imports it — only the manual test-ffaivideo.js probe does — and it carries an unfixable axios advisory through azure-openai.",
+    "langchain": "@langchain/openai moved 0.5.x -> 1.5.x: 0.5.x peers on @langchain/core <0.4 while core is ^1.2, which made `npm install` fail with ERESOLVE. 1.5.13 peers on core ^1.2.11, matching core and langgraph. The postinstall uuid shim is gone with it — it overwrote @langchain/core with an import from a hardcoded path that no longer exists."
   },
   "files": [
     "cli/",
     "scraper/",
     "brain/",
-    "tools/",
     "core/",
     "data/",
     "scripts/",
     "skills/",
-    "server.js",
-    "langgraph-agent.js",
+    "sword-server/",
+    "sword.mjs",
+    "bin/",
     ".github/workflows/ci.yml"
   ],
   "allowScripts": {
-    "better-sqlite3@12.11.1": true
+    "better-sqlite3@12.11.1": true,
+    "@ffmpeg-installer/linux-x64@4.1.0": true,
+    "@ffprobe-installer/linux-x64@5.2.0": true,
+    "esbuild@0.28.2": true
   }
 }
