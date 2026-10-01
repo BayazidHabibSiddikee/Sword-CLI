@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Bot, Plus, Trash2, Wrench, Settings2, Save, Loader2, Terminal, X } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
@@ -79,6 +80,8 @@ function hydrateHistory(messages: { role: string; content: string; tool_calls: s
 }
 
 export default function AgentPage() {
+  const navigate = useNavigate();
+
   const qc = useQueryClient()
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -252,6 +255,7 @@ export default function AgentPage() {
                 </Button>
               </>
             )}
+            <Button variant="link" size="sm" onClick={() => navigate("/keys")}><span className="underline">Get API Key</span></Button>
             <Button size="sm" onClick={() => setShowNew(true)}>
               <Plus className="size-3.5 mr-1" /> New session
             </Button>

@@ -5,7 +5,7 @@
  */
 import readline from 'readline';
 import chalk from 'chalk';
-import { LangGraphAgent } from '../character-flow/langgraph-agent.js';
+import { LangGraphAgent } from './langgraph-agent.js';
 import * as bridge from './skills/bridge.js';
 import * as gitSkill from './skills/git.js';
 import * as fileEditSkill from './skills/file_edit.js';

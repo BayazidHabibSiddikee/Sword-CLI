@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { PageHeader } from '@/components/page-header'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -58,6 +58,7 @@ function useOperation() {
 
 export default function SwordPage() {
   const [keyInput, setKeyInput] = useState('')
+  const navigate = useNavigate();
   const [auth, setAuth] = useState<{ key: string; sessions: SessionInfo[] } | null>(null)
   const operation = useOperation()
   function logout() {
@@ -72,7 +73,7 @@ export default function SwordPage() {
       <div className="rounded-2xl border bg-muted/40 p-4 text-sm space-y-2">
         <Badge variant="secondary">Text-only chat · server tools disabled</Badge>
         <p>Local single-user use only. Do not expose this dashboard to remote access. No uploads, command execution, or tool execution are available here.</p>
-        <p className="text-muted-foreground">Use your unified API key from <Link to="/keys" className="underline">Keys</Link>, not a provider key or dashboard password. This page keeps the credential only in component memory, never in storage or the URL. Leaving this page or logging out clears it.</p>
+        <p className="text-muted-foreground">Use your unified API key from <Link to="/keys" className="underline">Keys</Link> (or click <Button variant="link" size="sm" onClick={() => navigate("/keys")}><span className="underline">Get API Key</span></Button>), not a provider key or dashboard password. This page keeps the credential only in component memory, never in storage or the URL. Leaving this page or logging out clears it.</p>
       </div>
       {auth ? <SwordWorkspace credential={auth.key} initialSessions={auth.sessions} /> : (
         <form className="max-w-lg rounded-3xl border bg-card p-5 space-y-3" onSubmit={event => {

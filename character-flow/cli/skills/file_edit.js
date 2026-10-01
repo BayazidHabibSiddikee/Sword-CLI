@@ -7,14 +7,16 @@ import fs from 'fs';
 import path from 'path';
 import { execSync } from 'child_process';
 
-const DOCS_ROOT = '/home/sword/Documents';
+// Resolve paths relative to cwd first, then fall back to ./data/.
+// Override with SWORD_DOCS_ROOT if you need a different base.
+const DOCS_ROOT = process.env.SWORD_DOCS_ROOT || process.cwd();
 
 function resolvePath(rel) {
   if (rel.startsWith('/')) return rel;
   const tries = [
-    `${DOCS_ROOT}/${rel}`,
-    `./${rel}`,
     path.join(process.cwd(), rel),
+    path.join(DOCS_ROOT, rel),
+    path.join(process.cwd(), 'data', rel),
   ];
   for (const p of tries) {
     if (fs.existsSync(p)) return p;

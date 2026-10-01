@@ -7,21 +7,27 @@ import { execSync } from 'child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 'fs';
 import path from 'path';
 
-const BRIDGE = '/home/sword/Documents/projects/tools/tool_bridge.py';
-const TOOLS_DIR = '/home/sword/Documents/projects/tools';
-const RESULTS_DIR = '/home/sword/Documents/Characters/character-flow/data/results';
+// Bridge paths — configured via env, falling back to project-relative defaults.
+// Set SWORD_TOOLS_DIR, SWORD_RESULTS_DIR, and SWORD_TOOL_BRIDGE to override.
+const BRIDGE = process.env.SWORD_TOOL_BRIDGE ||
+  join(process.cwd(), 'tools', 'tool_bridge.py');
+const TOOLS_DIR = process.env.SWORD_TOOLS_DIR ||
+  join(process.cwd(), 'tools');
+const RESULTS_DIR = process.env.SWORD_RESULTS_DIR ||
+  join(process.cwd(), 'data', 'results');
 mkdirSync(RESULTS_DIR, { recursive: true });
 
-// Resolve any path: absolute passes through, relative searches /home/sword/Documents/ and ./data/results/
+/** Resolve a path: absolute passes through; relative tries cwd, ./data/results, then tools/. */
 function resolvePath(rel) {
   if (rel.startsWith('/')) return rel;
   const tries = [
-    `/home/sword/Documents/${rel}`,
-    `${RESULTS_DIR}/${rel}`,
-    `./${rel}`,
+    join(process.cwd(), rel),
+    join(RESULTS_DIR, rel),
+    join(TOOLS_DIR, rel),
+    join(process.cwd(), 'data', 'results', rel),
   ];
   for (const p of tries) if (existsSync(p)) return p;
-  return tries[0]; // return first attempt even if missing
+  return tries[0];
 }
 
 function py(module, func, args) {

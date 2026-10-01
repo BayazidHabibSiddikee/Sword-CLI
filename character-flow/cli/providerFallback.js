@@ -72,6 +72,32 @@ function withTimeout(promise, ms, label) {
  * @param {string} prompt
  * @param {{g4fTimeoutMs?: number, directTimeoutMs?: number}} [opts]
  */
+/**
+ * g4f request factory for use by cli/flow.js.
+ * g4f doesn't support tools, so tool_calls are stripped and the result is
+ * returned in the same shape as createRequest() from cli/agent.js.
+ *
+ * This keeps the g4f client in one place (providerFallback.js) instead of
+ * duplicating it across cli/flow.js, cli/tui.js and core/llm.js.
+ */
+export function createG4fRequest(tools, signal, onToken) {
+  let g4fClient = null;
+  return async messages => {
+    const { G4F } = await import('g4f');
+    g4fClient ??= new G4F();
+    const plainMessages = messages.map(m => ({
+      role: m.role === 'tool' ? 'assistant' : m.role,
+      content: m.content || (m.tool_calls ? '[Tool call results omitted]' : '')
+    })).filter(m => m.content);
+    const result = await g4fClient.chatCompletion(plainMessages, {
+      model: 'gpt-4o-mini',
+    });
+    const text = typeof result === 'string' ? result : result?.content ?? result?.text ?? result?.message?.content ?? '';
+    if (typeof onToken === 'function' && text) onToken(text);
+    return { choices: [{ message: { role: 'assistant', content: text || 'No response from g4f' } }] };
+  };
+}
+
 export async function attemptFallback(prompt, opts = {}) {
   if (typeof prompt !== 'string' || !prompt.trim()) throw new Error('Fallback prompt must not be empty');
   const g4fTimeoutMs = Number.isFinite(opts.g4fTimeoutMs) && opts.g4fTimeoutMs > 0 ? opts.g4fTimeoutMs : 45000;
@@ -118,5 +144,5 @@ export async function attemptFallback(prompt, opts = {}) {
 
   const reason = errors.map(e => `- ${e.provider}: ${e.error}`).join('\n') || 'unknown';
   // Offline fallback - provide a useful response without external API
-  return `[SwordCLI Offline Mode]\n\nYour prompt: "${prompt}"\n\nNo external LLM provider is available.\nTried:\n${reason}\n\nTo enable full AI capabilities:\n1. Start the local Sword backend: \`cd swordcli/server && npm run dev\` (port 3001)\n2. Or set OPENAI_BASE_URL and OPENAI_API_KEY to your provider\n3. Or set SWORDCLI_BASE_URL and SWORDCLI_TOKEN for a remote Sword backend\n4. Or set SWORD_FREE_FALLBACK_URL to an OpenAI-compatible free endpoint\n\nYou can still use local tools (file read/write, command execution, search) in the meantime.`;
+  return `[SwordCLI Offline Mode]\n\nYour prompt: "${prompt}"\n\nNo external LLM provider is available.\nTried:\n${reason}\n\nTo enable full AI capabilities:\n1. Start the in-tree API background + agent: \`./sword.mjs\` (API on :3001, minimal API on :3101)\n2. First run needs the swordcli workspace deps: \`npm install --prefix swordcli\`\n3. Or set OPENAI_BASE_URL and OPENAI_API_KEY to your provider\n4. Or set SWORDCLI_BASE_URL and SWORDCLI_TOKEN for a remote Sword API\n5. Or set SWORD_FREE_FALLBACK_URL to an OpenAI-compatible free endpoint\n\nYou can still use local tools (file read/write, command execution, search) in the meantime.`;
 }

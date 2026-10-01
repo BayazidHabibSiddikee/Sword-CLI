@@ -125,9 +125,24 @@ export function markdownLite(text, interactive) {
   return safe(text);
 }
 
-export const KNOWN_COMMANDS = ['help', 'clear', 'status', 'exit'];
+export const KNOWN_COMMANDS = [
+  'help', 'clear', 'status', 'exit', 'quit',
+  'team', 'team list', 'team add', 'team remove',
+  'clear', 'status', 'models', 'provider', 'providers',
+  'rag', 'rag add', 'rag search',
+  'web', 'download', 'scrape',
+  'tasks', 'tasks add', 'tasks list', 'tasks done', 'tasks stats',
+  'session', 'history', 'brain', 'info', 'provider',
+  'model', 'character', 'char', 'c',
+  'rag add', 'rag search',
+  'download', 'scrape', 'web',
+  'help', 'clear', 'status', 'exit', 'quit',
+];
 
 export function closestCommand(input) {
+  // Special case: "/" alone shows all commands
+  if (input === '/') return 'help';
+  
   const lower = input.toLowerCase().slice(1);
   let best = null;
   let bestScore = 0;

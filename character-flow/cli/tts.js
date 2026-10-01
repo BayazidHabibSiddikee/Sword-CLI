@@ -1,24 +1,13 @@
-import gTTS from 'gtts';
-import { spawn } from 'node:child_process';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+// Terminal bell only — deliberately dependency-free.
+//
+// This used to render the text to an MP3 with gTTS and then throw the file
+// away: playAudio() rang the bell and resolved, so the network call and the
+// dependency bought nothing. It also dragged in a critical form-data advisory
+// (gtts → request) with no upstream fix, so the MP3 step is gone; if real
+// speech is wanted again, add a player that actually plays the audio.
 
-function playAudio(file) {
-  process.stdout.write('\x07'); // Terminal bell
-  return new Promise((resolve) => resolve());
-}
-
-export function speak(text) {
-  return new Promise((resolve) => {
-    try {
-      const tts = new gTTS(text, 'en');
-      const filepath = join(tmpdir(), 'swordcli-tts.mp3');
-      tts.save(filepath, function (err) {
-        if (err) return resolve();
-        playAudio(filepath).then(resolve);
-      });
-    } catch {
-      resolve();
-    }
-  });
+/** Ring the terminal bell. Never throws, never touches the network. */
+export function speak() {
+  try { process.stdout.write('\x07'); } catch { /* not a TTY */ }
+  return Promise.resolve();
 }

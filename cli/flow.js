@@ -405,11 +405,11 @@ async function main() {
           for (const p of custom) console.error(`  custom  ${p.name} -> ${p.baseUrl} (model: ${p.model || 'default'})`);
         }
         console.error(`\nModels:\n  current: ${provider.model}\n  config: --model, SWORD_MODEL, or backend auto-routing\n\nUsage: /provider add <name> <baseUrl> <apiKey> <model>\n       /provider remove <id>\n`);
-      } else if (sub === 'add' && parts[1] && parts[2] && parts[3]) {
-        const name = parts[1];
-        const baseUrl = parts[2];
-        const apiKey = parts[3];
-        const model = parts[4] || '';
+      } else if (sub === 'add' && parts[2] && parts[3] && parts[4]) {
+        const name = parts[2];
+        const baseUrl = parts[3];
+        const apiKey = parts[4];
+        const model = parts[5] || '';
         addProvider({ name, baseUrl, apiKey, model });
         console.error(`Provider added: ${name}`);
       } else if (sub === 'remove' && parts[1]) {
@@ -469,6 +469,69 @@ async function main() {
       }
       return;
     }
+    if (line.startsWith('/providers') || line.startsWith('/provider')) {
+      const parts = line.split(/\s+/);
+      const sub = parts[1] || '';
+      const { listProviders, addProvider, removeProvider } = await import('./providers.js');
+      if (!sub || sub === 'list' || sub === 'ls') {
+        const custom = listProviders();
+        console.error(`
+Providers:
+  local   ${config.url || 'http://127.0.0.1:3101/v1'}
+  g4f     anonymous fallback
+  remote  SWORDCLI_BASE_URL / OPENAI_BASE_URL`);
+        if (custom.length) {
+          for (const p of custom) console.error(`  custom  ${p.name} -> ${p.baseUrl} (model: ${p.model || 'default'})`);
+        }
+        console.error(`
+Models:
+  current: ${provider.model}
+  config: --model, SWORD_MODEL, or backend auto-routing
+
+Usage: /provider add <name> <baseUrl> <apiKey> <model>
+       /provider remove <id>`);
+      } else if (sub === 'add' && parts[1] && parts[2] && parts[3]) {
+        const name = parts[1];
+        const baseUrl = parts[2];
+        const apiKey = parts[3];
+        const model = parts[4] || '';
+        addProvider({ name, baseUrl, apiKey, model });
+        console.error(`Provider added: ${name}`);
+      } else if (sub === 'remove' && parts[1]) {
+        removeProvider(parts[1]);
+        console.error('Provider removed');
+      } else {
+        console.error('Usage: /provider');
+      }
+      return;
+    }
+
+    if (line === '/') {
+      console.log('\nAvailable commands:\n' +
+        '  /help           Show this help\n' +
+        '  /clear          Clear conversation history\n' +
+        '  /status         Show session, model, cwd, history count\n' +
+        '  /team           Toggle team collaboration mode\n' +
+        '  /team list      Show team members\n' +
+        '  /team add <char>    Add character to team\n' +
+        '  /team remove <char> Remove character from team\n' +
+        '  /models         List available models\n' +
+        '  /provider       List/configure custom providers\n' +
+        '  /rag add <path|url>  Add to knowledge base\n' +
+        '  /rag search <query>  Search knowledge base\n' +
+        '  /web <url>      Fetch web page\n' +
+        '  /download <url>   Download file\n' +
+        '  /scrape <url>    Fetch JS-rendered page\n' +
+        '  /tasks          Manage todos (add, list, done, stats)\n' +
+        '  /session        Session info\n' +
+        '  /history        Conversation history\n' +
+        '  /brain          Current character info\n' +
+        '  /model <name>     Set model\n' +
+        '  /character <name> Switch character\n' +
+        '  /exit, /quit      Exit SwordCLI\n');
+      return;
+    }
+
     if (line.startsWith('/')) {
       const suggest = closestCommand(line);
       if (suggest) console.error(`Unknown command. Did you mean /${suggest}? Use /help.`);

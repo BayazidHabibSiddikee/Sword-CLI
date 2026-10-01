@@ -7,7 +7,7 @@ import { request as httpsRequest } from 'https';
 import { readFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { LangGraphAgent } from './langgraph-agent.js';
+import { LangGraphAgent } from './cli/langgraph-agent.js';
 import * as bridge from './skills/bridge.js';
 import * as gitSkill from './skills/git.js';
 import * as fileEditSkill from './skills/file_edit.js';

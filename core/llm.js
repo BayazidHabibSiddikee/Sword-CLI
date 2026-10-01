@@ -3,11 +3,13 @@
  *
  * Tries the local Sword backend OpenAI-compatible proxy first
  * (POST ${CONFIG.proxyBase}/chat/completions with Bearer auth). On ANY failure
- * — network error, non-200 status, malformed body — falls back to g4f so the
- * CLI always produces a reply. Never throws when g4f succeeds.
+ * — network error, non-200 status, malformed body — falls back to g4f via
+ * cli/providerFallback.js so the CLI always produces a reply.
+ * Never throws when g4f succeeds.
  */
 
 import { CONFIG, loadConfig } from './config.js';
+import { attemptFallback } from '../cli/providerFallback.js';
 
 let cachedKey = null;
 
@@ -96,12 +98,10 @@ export async function chat(messages, tools = [], opts = {}) {
     console.error('[llm] no API key resolved — falling back to g4f');
   }
 
-  // Fallback: never throw if g4f works.
+  // Fallback: delegate to the centralized g4f + free-endpoint chain in providerFallback.js.
   try {
-    const { G4F } = await import('g4f');
-    const g4f = new G4F();
-    const content = await g4f.chatCompletion(messages);
-    return { content, provider: 'g4f' };
+    const text = await attemptFallback(messages.map(m => typeof m.content === 'string' ? m.content : String(m.content || '')).join('\n'));
+    return { content: text, provider: 'g4f' };
   } catch (err) {
     throw new Error(`chat failed: proxy unreachable and g4f fallback failed (${err?.message ?? err})`);
   }

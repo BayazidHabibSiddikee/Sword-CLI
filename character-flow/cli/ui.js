@@ -31,7 +31,10 @@ export function toolLine(name, info = {}) {
 }
 
 export function friendlyError(error, { aborted = false } = {}) {
-  if (error?.name === 'AbortError' && aborted) return CANCELLED;
+  // `aborted` means the turn was cancelled by the user (Ctrl+C), whatever error
+  // surfaced it — an AbortError from the request, or the permission error readline
+  // throws when an approval prompt is interrupted.
+  if (aborted || error?.abortedByUser === true) return CANCELLED;
   if (error?.name === 'TimeoutError') return timeoutMessage(120);
   if (error?.name === 'AbortError') return `Error: ${error?.message ?? error}`;
   return `Error: ${error?.message ?? error}`;
@@ -154,6 +157,33 @@ export function summarizeResult(result) {
   if (typeof result.url === 'string') return result.url;
   if (typeof result.markdown === 'string') return result.markdown;
   return '';
+}
+
+/**
+ * "Thinking…" marker for the REPL, deliberately NOT a TTY spinner.
+ *
+ * ora clears the frame it drew with `for (index = 0; index < linesToClear; index++)`
+ * and sizes that frame from the output stream's `columns`. A terminal that reports
+ * `columns = 0` — bare PTYs (Python `pty.openpty()`, `script`), some ssh/tmux/IDE
+ * pipes — makes it compute `Math.ceil(width / 0) = Infinity` lines, so the process
+ * spins forever writing cursor escapes and never reads stdin again. ora's stdin
+ * discarder also puts the TTY in raw mode, which fights readline's own prompt.
+ *
+ * One plain line, no cursor control, no stdin access, no unbounded loop.
+ */
+export function thinkingIndicator(stream = process.stderr) {
+  let pending = false;
+  const indicator = {
+    start() {
+      if (!pending) { pending = true; stream.write('Thinking…'); }
+      return indicator;
+    },
+    stop() {
+      if (pending) { pending = false; stream.write('\n'); }
+      return indicator;
+    }
+  };
+  return indicator;
 }
 
 export function banner(opts) {
