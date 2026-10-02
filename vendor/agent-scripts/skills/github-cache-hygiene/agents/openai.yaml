@@ -1,0 +1,4 @@
+interface:
+  display_name: "GitHub Cache Hygiene"
+  short_description: "Reduce GitHub API use with local caches"
+  default_prompt: "Use $github-cache-hygiene to discover in the local Gitcrawl archive first, then use the existing Octopool-backed bare PATH gh with explicit JSON fields for current GitHub metadata."

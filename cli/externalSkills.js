@@ -1,7 +1,8 @@
 // External-skill discovery and loading.
 //
 // Scans ~/.claude/skills, ~/.opencode/skills, ~/.gemini/skills and ~/.cline/skills
-// for SKILL.md files, parses their frontmatter, and builds:
+// plus this repo's vendored vendor/agent-scripts/skills tree for SKILL.md files,
+// parses their frontmatter, and builds:
 //   - A compact index of {name: description} pairs for inclusion in the system prompt
 //   - A synchronous loadSkill(name) function that reads and validates the full
 //     content before returning it.
@@ -18,29 +19,43 @@
 // comfortably inside the system-prompt budget.
 
 import { existsSync, readdirSync, readFileSync, lstatSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const HOME = process.env.HOME || process.env.USERPROFILE || '';
+const __dirname = dirname(fileURLToPath(import.meta.url));
+// Skills vendored into this repo (steipete/agent-scripts) are discovered alongside
+// the home-directory roots, so a checkout gets its openclaw-relay / telecrawl /
+// whatsapp skills without a global sync step. __dirname is cli/; the tree sits at
+// ../vendor/agent-scripts/skills. Missing dirs are skipped by the caller.
+const VENDORED_SKILL_DIRS = [
+  join(__dirname, '..', 'vendor', 'agent-scripts', 'skills'),
+];
 const SKILL_DIRS = [
   join(HOME, '.claude', 'skills'),
   join(HOME, '.opencode', 'skills'),
   join(HOME, '.gemini', 'skills'),
   join(HOME, '.cline', 'skills'),
+  ...VENDORED_SKILL_DIRS,
 ];
 const MAX_SIZE_BYTES = 500 * 1024; // 500 KB per file
 /** Truncate descriptions at the first sentence boundary past this length. */
 const DESC_MAX_LEN = 180;
 /** Safety pattern — any SKILL.md matching one of these is rejected outright. */
+// Intent-targeted patterns. The old list matched bare English words (OVERRIDE,
+// DISREGARD, NEVER FOLLOW) anywhere in the body, so a benign line like "Override
+// with env or flags when needed" silently disqualified a legitimate skill — it
+// dropped 9 of the 69 vendored agent-scripts skills, including openclaw-relay.
+// Each pattern now requires an instruction actually aimed at the agent.
 const INJECTION_PATTERNS = [
-  /^Ignore previous instructions/i,
-  /Never follow instructions/i,
-  /\bOVERRIDE\b/i,
-  /\bDISREGARD\b/i,
-  /\bNEVER FOLLOW\b/i,
-  /You are no longer/i,
-  /\bForget everything\b/i,
+  /\bignore (all |any )?(previous|prior|above|earlier|the) ?(instructions|prompts|rules|context)\b/i,
+  /\bdisregard (all |any )?(previous|prior|above|earlier|the) ?(instructions|prompts|rules|context)\b/i,
+  /\bnever follow (the |your |any )?(user|system|previous|above) ?(instructions|prompts|rules)\b/i,
+  /\bforget (everything|all previous|your instructions)\b/i,
+  /\byou are (no longer|now) (an? )?(unrestricted|unfiltered|different|new)\b/i,
   /\bsystem prompt override\b/i,
   /\bnew role definition\b/i,
+  /\breveal (your|the) (system |hidden )?(prompt|instructions)\b/i,
 ];
 
 function truncateDescription(desc) {
@@ -52,7 +67,7 @@ function truncateDescription(desc) {
   return s.slice(0, DESC_MAX_LEN) + '\u2026';
 }
 
-function looksInjected(content) {
+export function looksInjected(content) {
   for (const pat of INJECTION_PATTERNS) {
     if (pat.test(content)) return true;
   }

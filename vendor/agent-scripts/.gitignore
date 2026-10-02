@@ -1,0 +1,11 @@
+.DS_Store
+.*.bun-build
+.pnpm-store/
+node_modules/
+__pycache__/
+*.py[cod]
+bin/*
+!bin/
+!bin/git
+!bin/rm
+skills/.system/

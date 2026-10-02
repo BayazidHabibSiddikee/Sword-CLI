@@ -1,0 +1,115 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "yaml"
+
+repo_root = `git rev-parse --show-toplevel 2>/dev/null`.strip
+Dir.chdir(repo_root.empty? ? Dir.pwd : repo_root)
+
+def load_front_matter(path, text)
+  match = text.match(/\A---\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\z)/m)
+  return [nil, "front matter must start on the first line and close with ---"] unless match
+
+  yaml_text = match[1]
+  data =
+    begin
+      YAML.safe_load(
+        yaml_text,
+        permitted_classes: [],
+        permitted_symbols: [],
+        aliases: false,
+      )
+    rescue ArgumentError
+      YAML.safe_load(yaml_text, [], [], false)
+    end
+
+  return [nil, "front matter must be a YAML mapping"] unless data.is_a?(Hash)
+
+  [data, nil]
+rescue Psych::SyntaxError => e
+  [nil, "YAML: #{e.problem} at line #{e.line} column #{e.column}"]
+rescue StandardError => e
+  [nil, "YAML: #{e.message}"]
+end
+
+GH_SECRET_BODY_DASH = /
+  \bgh[ \t]+secret[ \t]+set\b
+  [^;\r\n|&]{0,500}?
+  --body[ \t]+-
+  (?=$|[\s`'";|&)\\])
+/x
+
+def gh_secret_body_dash_line(text)
+  lines = text.lines.map { |line| line.sub(/\r?\n\z/, "") }
+
+  lines.each_with_index do |line, index|
+    return index + 1 if GH_SECRET_BODY_DASH.match?(line)
+  end
+
+  lines.each_cons(2).with_index do |(first, second), index|
+    boundary = first.length
+    match = GH_SECRET_BODY_DASH.match("#{first} #{second}")
+    next unless match && match.begin(0) < boundary && match.end(0) > boundary
+
+    return index + 1
+  end
+
+  nil
+end
+
+skill_files = Dir.glob("skills/*/SKILL.md").sort
+errors = []
+names = {}
+
+skill_files.each do |path|
+  text = File.read(path, encoding: "UTF-8")
+  bad_secret_line = gh_secret_body_dash_line(text)
+  if bad_secret_line
+    errors << [
+      path,
+      "line #{bad_secret_line}: `gh secret set` must read stdin by omitting `--body`; never use `--body -`",
+    ]
+  end
+
+  data, error = load_front_matter(path, text)
+
+  if error
+    errors << [path, error]
+    next
+  end
+
+  %w[name description].each do |field|
+    value = data[field]
+    next if value.is_a?(String) && !value.strip.empty?
+
+    errors << [path, "missing non-empty string field: #{field}"]
+  end
+
+  name = data["name"]
+  next unless name.is_a?(String) && !name.strip.empty?
+
+  normalized_name = name.strip
+  if names.key?(normalized_name)
+    errors << [
+      path,
+      "duplicate skill name #{normalized_name.inspect} also used by #{names[normalized_name]}",
+    ]
+  else
+    names[normalized_name] = path
+  end
+end
+
+if skill_files.empty?
+  warn "No skills/*/SKILL.md files found."
+  exit 0
+end
+
+if errors.any?
+  warn "Skill validation failed:"
+  errors.each do |path, error|
+    warn "- #{path}: #{error}"
+  end
+  exit 1
+end
+
+puts "Validated #{skill_files.length} skill(s)."

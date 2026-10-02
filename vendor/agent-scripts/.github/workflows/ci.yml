@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: skills/video-transcript-downloader/package-lock.json
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+
+      - name: Validate skill metadata
+        run: scripts/validate-skills
+
+      - name: Check shell helper syntax
+        run: |
+          bash -n scripts/sync-skills
+          bash -n scripts/test-sync-skills
+          find skills -path '*/scripts/*' -type f -print0 |
+            while IFS= read -r -d '' script; do
+              if head -n 1 "$script" | grep -q 'bash'; then
+                bash -n "$script"
+              fi
+            done
+
+      - name: Test skill link sync and audit
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
+          /bin/bash scripts/test-sync-skills
+
+      - name: Test ClawSweeper status helper
+        run: skills/clawsweeper-status/scripts/clawsweeper-status.test.sh
+
+      - name: Test Xcode CLI smoke and rollback (synthetic)
+        run: /bin/bash skills/xcode-sync/scripts/xcode-post-install-smoke.test.sh
+
+      - name: Test npm helpers (offline, synthetic)
+        run: |
+          test_home="$(mktemp -d)"
+          trap 'rm -rf "$test_home"' EXIT
+          timeout 60s env -i HOME="$test_home" PATH="$PATH" node --test skills/npm/scripts/*.test.mjs </dev/null
+          timeout 30s env -i HOME="$test_home" PATH="$PATH" /bin/bash skills/npm/scripts/npm-auth.test.sh </dev/null
+
+      - name: Test Codex context and private-home auth preflight (offline, synthetic)
+        run: |
+          test_home="$(mktemp -d)"
+          trap 'rm -rf "$test_home"' EXIT
+          timeout 60s env -i HOME="$test_home" PATH="$PATH" ruby skills/codex-huge-context/scripts/preflight.test.rb </dev/null
+
+      - name: Test macOS release helpers (synthetic)
+        run: |
+          /bin/bash skills/release-mac-app/scripts/mac-release.test.sh
+          /bin/bash skills/release-mac-app/scripts/mac-release-canary.test.sh
+          /bin/bash skills/release-mac-app/scripts/mac-release-provider.test.sh
+          /bin/bash skills/release-mac-app/scripts/mac-release-assets.test.sh
+          /bin/bash skills/release-mac-app/scripts/mac-release-publication.test.sh
+          /bin/bash skills/release-mac-app/scripts/mac-release-download.test.sh
+
+      - name: Test maintainer orchestrator worker boundary
+        run: scripts/test-maintainer-orchestrator-policy
+
+      - name: Build browser helper
+        run: |
+          bun install --frozen-lockfile
+          bun test scripts/browser-tools-profile.test.ts
+          bun build scripts/browser-tools.ts --compile --target bun --outfile /tmp/browser-tools
+          /tmp/browser-tools --help
+
+      - name: Install video transcript downloader dependencies
+        working-directory: skills/video-transcript-downloader
+        run: npm ci
+
+      - name: Smoke video transcript downloader
+        working-directory: skills/video-transcript-downloader
+        run: |
+          node -e "import('youtube-transcript-plus').then(m => { if (typeof m.YoutubeTranscript?.fetchTranscript !== 'function') process.exit(1); })"
+          ./scripts/vtd.js transcript --help
