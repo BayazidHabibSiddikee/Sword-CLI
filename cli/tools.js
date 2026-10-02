@@ -1,4 +1,4 @@
-import { lstat, readFile, readdir, mkdir, writeFile, realpath } from 'node:fs/promises';
+import { lstat, readFile, readdir, mkdir, writeFile, rename, rm, realpath } from 'node:fs/promises';
 import { resolve, relative, sep, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
@@ -22,7 +22,7 @@ const definition = (name, description, properties, required = []) => ({ type: 'f
 } });
 export const toolDefinitions = [
   definition('list_files', 'List project files; skips hidden/build/dependency directories.', { path: string }),
-  definition('read_file', 'Read a text file before editing. Use offset/limit for large files; omit them to read the whole file.', { path: string, offset: { type: 'integer' }, limit: { type: 'integer' } }, ['path']),
+  definition('read_file', 'Read a text file before editing. Omit offset/limit to read the whole file (bounded to 64 KB); use offset/limit to page through anything larger.', { path: string, offset: { type: 'integer' }, limit: { type: 'integer' } }, ['path']),
   definition('search_files', 'Search literal text across project files.', { query: string }, ['query']),
   definition('write_file', 'Create or overwrite text with approval; read existing files first.', { path: string, content: string }, ['path', 'content']),
   definition('edit_file', 'Replace exactly one occurrence in a previously read file with approval.', { path: string, old_text: string, new_text: string }, ['path', 'old_text', 'new_text']),
@@ -173,7 +173,23 @@ export function createTools({ cwd, approve = async () => false, signal, timeout 
     try { now = await read(full); } catch (error) { if (error.code !== 'ENOENT') throw error; }
     if (now !== before) throw new Error('File changed during approval');
     await mkdir(dirname(full), { recursive: true });
-    await writeFile(full, after, { flag: before === null ? 'wx' : 'w' });
+    if (before === null) {
+      // Create: 'wx' fails if the path already exists, so a create can never
+      // clobber a file that appeared between the staleness check and this write.
+      await writeFile(full, after, { flag: 'wx' });
+    } else {
+      // Overwrite atomically: write a sibling temp file and rename it into place.
+      // A crash mid-write then leaves either the old file or the new one on disk,
+      // never a half-written source file.
+      const temp = `${full}.flow-${process.pid}-${Date.now().toString(36)}.tmp`;
+      try {
+        await writeFile(temp, after, { flag: 'wx' });
+        await rename(temp, full);
+      } catch (error) {
+        await rm(temp, { force: true }).catch(() => {});
+        throw error;
+      }
+    }
     snapshots = new Map([...snapshots, [full, after]]);
     return { path: full, bytes: Buffer.byteLength(after) };
   }

@@ -112,11 +112,19 @@ export async function readEventStream(response, onToken) {
   return { choices: [{ message }] };
 }
 
-// Three tiers, matching cline: a repeated *failing* call hard-stops at 3, a
-// repeated erroring call warns at 3 and stops at 5, and a merely repeated
-// successful call warns at 5. Cheap, and it stops the model burning all 20 steps
-// on the same mistake before the step-limit error discards the whole run.
-const LOOP_HARD = 3, LOOP_SOFT = 5, MISTAKE_LIMIT = 3;
+// Three tiers, and only a genuine FAILURE climbs the stop ladder. The previous
+// guard counted a call *before* its outcome was known, so three identical
+// SUCCESSFUL calls tripped the "it keeps failing" stop, and the soft tier
+// (`seen >= 5`) was unreachable because it sat behind `seen >= 3`.
+//   - soft  / LOOP_SOFT   (consecutive identical failures >= 2): guidance, keep going
+//   - hard  / LOOP_HARD   (consecutive identical failures >= 3): stop the turn
+//   - repeat/ LOOP_REPEAT (consecutive identical successes >= 5): a note, never stops
+const LOOP_SOFT = 2, LOOP_HARD = 3, LOOP_REPEAT = 5, MISTAKE_LIMIT = 3;
+
+function loopStopText(name, seen) {
+  return `You have called \`${name}\` with identical arguments ${seen} times in a row and it keeps failing. `
+    + 'Stop retrying. Re-read the relevant file, reconsider the approach, or tell the user what is blocking you.';
+}
 
 function callKey(name, args) {
   let stable;
@@ -141,6 +149,9 @@ export async function runTurn({ messages, request, execute, maxSteps = 20, onEve
       if (typeof msg.content !== 'string' || !msg.content.trim()) throw new Error('Empty provider response');
       return { text: msg.content, messages: history };
     }
+    // Ids already answered this turn, so a stop can never emit a second tool
+    // result for one id — duplicate tool_call_ids are rejected by providers.
+    const answered = new Set(history.filter(m => m.role === 'tool').map(m => m.tool_call_id));
     let stepFailed = false;
     for (const call of calls) {
       signal?.throwIfAborted();
@@ -160,26 +171,6 @@ export async function runTurn({ messages, request, execute, maxSteps = 20, onEve
           onEvent(name, { ok: false, ms: elapsed(startedAt), summary: error.message });
         }
       }
-      if (!failure) {
-        const seen = (repeats.get(callKey(name, args)) ?? 0) + 1;
-        repeats.set(callKey(name, args), seen);
-        const hard = seen >= LOOP_HARD;
-        const soft = seen >= LOOP_SOFT;
-        if (hard || soft) {
-          const detail = `You have called \`${name}\` with identical arguments ${seen} times in a row and it keeps failing. Stop retrying. Re-read the relevant file, reconsider the approach, or tell the user what is blocking you.`;
-          if (hard) {
-            // Answer with the model's own last words so the turn ends cleanly
-            // instead of throwing away every step it already took.
-            const spoken = typeof msg.content === 'string' && msg.content.trim() ? msg.content.trim() : null;
-            const text = `${spoken ? `${spoken}\n\n` : ''}${detail}`;
-            const failedIds = calls.filter(c => c.id).map(c => c.id);
-            history = [...history, ...failedIds.map(id => ({ role: 'tool', tool_call_id: id, content: JSON.stringify({ error: 'loop_detected' }) }))];
-            onCheckpoint(history);
-            return { text, messages: history };
-          }
-          result = { error: `${detail} (repetition ${seen}/${LOOP_SOFT})` };
-        }
-      }
       if (!failure && result === null) {
         try {
           result = await execute(name, args);
@@ -196,16 +187,49 @@ export async function runTurn({ messages, request, execute, maxSteps = 20, onEve
         throw failure;
       }
       signal?.throwIfAborted();
-      if (!failure) {
-        const ok = result?.error === undefined;
-        if (!ok) stepFailed = true;
-        const summary = summarizeResult(result) || (args && typeof args.path === 'string' ? args.path : '');
-        onEvent(name, { ok, ms: elapsed(startedAt), summary });
+      const ok = result?.error === undefined;
+      if (!ok) stepFailed = true;
+
+      // Loop accounting runs AFTER the outcome is known, and a change of outcome
+      // for the same (tool, args) pair resets the streak. So only a run of
+      // identical *failures* climbs the stop ladder: a repeated good call never
+      // stops the turn, and a success mid-run clears the failure streak.
+      const key = callKey(name, args);
+      const failingNow = !ok;
+      const prev = repeats.get(key);
+      const seen = prev && prev.failing === failingNow ? prev.count + 1 : 1;
+      repeats.set(key, { count: seen, failing: failingNow });
+      const base = result && typeof result === 'object' ? result : { result };
+      let stop = false;
+      if (failingNow && seen >= LOOP_HARD) {
+        stop = true;
+        result = { error: loopStopText(name, seen) };
+      } else if (failingNow && seen >= LOOP_SOFT) {
+        result = { ...base, error: `${base.error ?? 'failed'} (repetition ${seen}/${LOOP_HARD})` };
+      } else if (!failingNow && seen >= LOOP_REPEAT) {
+        result = { ...base, note: `\`${name}\` was called ${seen} times with identical arguments and succeeded each time. Continue only if that repetition is intentional.` };
       }
+
+      const summary = summarizeResult(result) || (args && typeof args.path === 'string' ? args.path : '');
+      onEvent(name, { ok: result?.error === undefined, ms: elapsed(startedAt), summary });
       const serialized = JSON.stringify(result ?? null);
       const content = serialized.length > TOOL_OUTPUT_CHARS ? truncateMiddle(serialized, TOOL_OUTPUT_CHARS) : serialized;
       history = [...history, { role: 'tool', tool_call_id: call.id, content }];
+      answered.add(call.id);
       onCheckpoint(history);
+
+      if (stop) {
+        // Answer with the model's own last words so the turn ends cleanly instead
+        // of throwing away every step it already took, and close out ONLY the ids
+        // that still have no result so the tool_call/tool_result pairing stays
+        // valid — a second result for an already-answered id is a protocol error.
+        const spoken = typeof msg.content === 'string' && msg.content.trim() ? msg.content.trim() : null;
+        const text = `${spoken ? `${spoken}\n\n` : ''}${loopStopText(name, seen)}`;
+        const pending = calls.filter(c => c.id && !answered.has(c.id));
+        history = [...history, ...pending.map(c => ({ role: 'tool', tool_call_id: c.id, content: JSON.stringify({ error: 'loop_detected' }) }))];
+        onCheckpoint(history);
+        return { text, messages: history };
+      }
     }
     if (stepFailed) {
       mistakes++;
