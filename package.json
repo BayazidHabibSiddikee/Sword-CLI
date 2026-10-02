@@ -22,7 +22,7 @@
   "type": "module",
   "bin": {
     "flow": "cli/flow.js",
-    "sword": "cli/flow.js"
+    "sword": "bin/sword"
   },
   "engines": {
     "node": ">=22"

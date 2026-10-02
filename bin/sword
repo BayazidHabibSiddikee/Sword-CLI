@@ -1,22 +1,26 @@
 #!/usr/bin/env node
-// bin/sword — SwordCLI launcher
+// bin/sword — user-facing launcher.
+//
+// `sword` with no arguments brings up the whole local stack (swordcli API :3001,
+// sword-server :3101, web UI :3002) and then hands the terminal to the agent CLI,
+// so the same command gives you a browser-controllable API *and* the TUI.
+// `sword up|down|status|logs|web|backend|api|...` are forwarded to sword.mjs.
+//
+// Everything is delegated to sword.mjs, which resolves paths relative to itself.
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const root = join(__dirname, '..');
+const root = dirname(dirname(fileURLToPath(import.meta.url)));
+const launcher = join(root, 'sword.mjs');
 
-// The CLI lives at cli/flow.js
-const script = join(root, 'cli', 'flow.js');
-
-if (!existsSync(script)) {
-  console.error(`sword: Cannot find ${script}`);
+if (!existsSync(launcher)) {
+  console.error(`sword: launcher missing at ${launcher}`);
   process.exit(1);
 }
 
-const child = spawn(process.execPath, [script, ...process.argv.slice(2)], {
+const child = spawn(process.execPath, [launcher, ...process.argv.slice(2)], {
   stdio: 'inherit',
   cwd: process.cwd(),
 });

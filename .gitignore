@@ -44,3 +44,6 @@ swordcli/logs/
 
 # Nested repo with its own remote (freellmapi) - tracked there, not here
 /GET_API/
+
+# local CLI runtime state (custom providers are per-machine, never committed)
+.flow/

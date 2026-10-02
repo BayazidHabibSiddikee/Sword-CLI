@@ -27,10 +27,22 @@ const ragDb = new RagEngine(join(__dirname, 'brain', 'rag.db'));
 let localSessionHistory = [];   // messages loaded from --session file at startup
 
 // ── Custom providers ───────────────────────────────────────────────────────────
+// A custom provider is opt-in only. It is used when the caller explicitly names one
+// of its models via --model; with no (or an unknown) model hint we deliberately return
+// null so the configured local backend stays in charge. Falling back to "the last
+// provider in the file" would silently hijack every default run — e.g. a stale
+// .flow/providers.json entry would send all traffic to a dead URL and force g4f.
 async function resolveCustomProvider(modelHint, fallbackOnly) {
+  if (fallbackOnly) return null;
+  if (!modelHint) return null;
   const custom = listProviders();
   if (!custom.length) return null;
-  const match = modelHint ? custom.find(p => p.model && p.model.toLowerCase() === String(modelHint).toLowerCase()) || custom[custom.length - 1] : custom[custom.length - 1];
+  const hint = String(modelHint).toLowerCase();
+  const match = custom.find(
+    p => p.model && p.model.toLowerCase() === hint
+      || p.name && p.name.toLowerCase() === hint
+      || p.id && p.id.toLowerCase() === hint
+  );
   if (!match) return null;
   return { url: match.baseUrl, key: match.apiKey, model: match.model || 'auto' };
 }
