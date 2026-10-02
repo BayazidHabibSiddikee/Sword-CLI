@@ -33,7 +33,7 @@
     "test": "node --experimental-test-module-mocks --test test/*.test.js",
     "test:coverage": "node --experimental-test-module-mocks --test --experimental-test-coverage --test-coverage-include='cli/*.js' test/*.test.js",
     "flow:agent": "node cli/flow.js",
-    "flow:web": "npm run dev --prefix web",
+    "flow:web": "npm run dev --prefix swordcli/client",
     "api": "./sword.mjs api",
     "stack:up": "./sword.mjs up",
     "stack:down": "./sword.mjs down",
@@ -73,6 +73,7 @@
     "scripts/",
     "skills/",
     "sword-server/",
+    "vendor/agent-scripts/skills",
     "sword.mjs",
     "bin/",
     ".github/workflows/ci.yml"
