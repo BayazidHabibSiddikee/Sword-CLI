@@ -4,8 +4,8 @@ import http from 'node:http';
 import { fallbackNotice, attemptFallback, setG4fFactory } from '../cli/providerFallback.js';
 
 test('providerFallback uses g4f and validates prompts/results', async () => {
-  assert.ok(fallbackNotice().startsWith('[Fallback]'));
-  assert.ok(fallbackNotice().includes('free fallback providers'));
+  assert.ok(fallbackNotice().includes('CHAT-ONLY'), 'must warn that no tools ran');
+  assert.ok(fallbackNotice().includes('no files were read or changed'));
 
   for (const prompt of ['', '   ', String.fromCharCode(9, 10)]) { // '', spaces, tab+newline
     await assert.rejects(attemptFallback(prompt), /Fallback prompt must not be empty/);

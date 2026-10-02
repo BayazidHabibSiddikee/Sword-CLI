@@ -38,7 +38,11 @@ export function setG4fFactory(factory) {
 
 /** The single user-visible notice printed when the fallback engages. */
 export function fallbackNotice() {
-  return '[Fallback] Primary provider failed, using free fallback providers...';
+  // Be explicit that the reply below is chat-only. The old wording implied the agent
+  // was still working; a coding task silently loses its tools here and the user has
+  // no way to tell that from a completed answer.
+  return '[Degraded] Primary provider failed — the reply below is CHAT-ONLY: no tools ran, no files were read or changed, no commands executed. '
+    + 'Retry, or run /clear and switch provider with --model, to do actual work.';
 }
 
 /**

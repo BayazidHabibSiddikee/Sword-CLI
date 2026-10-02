@@ -2,6 +2,17 @@ import { readFile, writeFile, mkdir, rename, lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { elapsed, summarizeResult } from './ui.js';
 
+const TOOL_OUTPUT_CHARS = 48000;
+
+// Elide the middle, keep head and tail — the end of a build or test log is the part
+// that says what went wrong. Kept local rather than imported from tools.js to avoid
+// a module cycle.
+function truncateMiddle(body, max) {
+  const notice = chars => `\n[truncated ${chars} chars — head and tail preserved]\n`;
+  const half = Math.max(1, Math.floor((max - notice(body.length).length) / 2));
+  return `${body.slice(0, half)}${notice(body.length - half * 2)}${body.slice(-half)}`;
+}
+
 export function providerConfig(env = process.env) {
   const base = new URL(env.OPENAI_BASE_URL || env.PROXY_HOST || 'http://localhost:3001/v1');
   if (base.username || base.password || base.search || base.hash) throw new Error('Provider URL must not contain credentials, query or fragment');
@@ -101,8 +112,22 @@ export async function readEventStream(response, onToken) {
   return { choices: [{ message }] };
 }
 
+// Three tiers, matching cline: a repeated *failing* call hard-stops at 3, a
+// repeated erroring call warns at 3 and stops at 5, and a merely repeated
+// successful call warns at 5. Cheap, and it stops the model burning all 20 steps
+// on the same mistake before the step-limit error discards the whole run.
+const LOOP_HARD = 3, LOOP_SOFT = 5, MISTAKE_LIMIT = 3;
+
+function callKey(name, args) {
+  let stable;
+  try { stable = JSON.stringify(args ?? {}, Object.keys(args ?? {}).sort()); } catch { stable = String(args); }
+  return `${name}:${stable}`;
+}
+
 export async function runTurn({ messages, request, execute, maxSteps = 20, onEvent = () => {}, onCheckpoint = () => {}, signal }) {
   let history = [...messages];
+  const repeats = new Map();
+  let mistakes = 0;
   for (let step = 0; step < maxSteps; step++) {
     signal?.throwIfAborted();
     const data = await request(history);
@@ -116,22 +141,54 @@ export async function runTurn({ messages, request, execute, maxSteps = 20, onEve
       if (typeof msg.content !== 'string' || !msg.content.trim()) throw new Error('Empty provider response');
       return { text: msg.content, messages: history };
     }
+    let stepFailed = false;
     for (const call of calls) {
       signal?.throwIfAborted();
       if (!call.id || !call.function?.name) throw new Error('Invalid tool call');
-      onEvent(call.function.name);
+      const name = call.function.name;
+      onEvent(name);
       const startedAt = performance.now();
       let args = null;
       let failure = null;
       let result = null;
       try {
         args = JSON.parse(call.function.arguments || '{}');
-        result = await execute(call.function.name, args);
       } catch (error) {
         if (signal?.aborted) failure = error;
         else {
-          result = { error: error.message };
-          onEvent(call.function.name, { ok: false, ms: elapsed(startedAt), summary: error.message });
+          result = { error: `Malformed JSON arguments: ${error.message}` };
+          onEvent(name, { ok: false, ms: elapsed(startedAt), summary: error.message });
+        }
+      }
+      if (!failure) {
+        const seen = (repeats.get(callKey(name, args)) ?? 0) + 1;
+        repeats.set(callKey(name, args), seen);
+        const hard = seen >= LOOP_HARD;
+        const soft = seen >= LOOP_SOFT;
+        if (hard || soft) {
+          const detail = `You have called \`${name}\` with identical arguments ${seen} times in a row and it keeps failing. Stop retrying. Re-read the relevant file, reconsider the approach, or tell the user what is blocking you.`;
+          if (hard) {
+            // Answer with the model's own last words so the turn ends cleanly
+            // instead of throwing away every step it already took.
+            const spoken = typeof msg.content === 'string' && msg.content.trim() ? msg.content.trim() : null;
+            const text = `${spoken ? `${spoken}\n\n` : ''}${detail}`;
+            const failedIds = calls.filter(c => c.id).map(c => c.id);
+            history = [...history, ...failedIds.map(id => ({ role: 'tool', tool_call_id: id, content: JSON.stringify({ error: 'loop_detected' }) }))];
+            onCheckpoint(history);
+            return { text, messages: history };
+          }
+          result = { error: `${detail} (repetition ${seen}/${LOOP_SOFT})` };
+        }
+      }
+      if (!failure && result === null) {
+        try {
+          result = await execute(name, args);
+        } catch (error) {
+          if (signal?.aborted) failure = error;
+          else {
+            result = { error: error.message };
+            onEvent(name, { ok: false, ms: elapsed(startedAt), summary: error.message });
+          }
         }
       }
       if (failure) {
@@ -140,14 +197,23 @@ export async function runTurn({ messages, request, execute, maxSteps = 20, onEve
       }
       signal?.throwIfAborted();
       if (!failure) {
+        const ok = result?.error === undefined;
+        if (!ok) stepFailed = true;
         const summary = summarizeResult(result) || (args && typeof args.path === 'string' ? args.path : '');
-        onEvent(call.function.name, { ok: result?.error === undefined, ms: elapsed(startedAt), summary });
+        onEvent(name, { ok, ms: elapsed(startedAt), summary });
       }
       const serialized = JSON.stringify(result ?? null);
-      const content = serialized.length > 16384 ? `${serialized.slice(0, 8000)}\n[truncated]\n${serialized.slice(-8000)}` : serialized;
+      const content = serialized.length > TOOL_OUTPUT_CHARS ? truncateMiddle(serialized, TOOL_OUTPUT_CHARS) : serialized;
       history = [...history, { role: 'tool', tool_call_id: call.id, content }];
       onCheckpoint(history);
     }
+    if (stepFailed) {
+      mistakes++;
+      if (mistakes >= MISTAKE_LIMIT) {
+        history = [...history, { role: 'user', content: 'Several tool calls in a row have failed. Stop, re-read the files you changed, and either fix the problem or report precisely what is blocked.' }];
+        mistakes = 0;
+      }
+    } else mistakes = 0;
   }
   throw new Error(`Agent step limit (${maxSteps}) reached`);
 }

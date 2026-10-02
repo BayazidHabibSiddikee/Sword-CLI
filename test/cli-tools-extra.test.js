@@ -27,7 +27,7 @@ test('ambiguous edits and approval-time changes are refused', async t => {
   const { cwd, execute } = await fixture(t, async () => true);
   await writeFile(join(cwd, 'a'), 'repeat repeat');
   await execute('read_file', { path: 'a' });
-  await assert.rejects(execute('edit_file', { path: 'a', old_text: 'repeat', new_text: 'x' }), /exactly once/);
+  await assert.rejects(execute('edit_file', { path: 'a', old_text: 'repeat', new_text: 'x' }), /matches 2 places/);
   const changing = createTools({ cwd, approve: async () => { await writeFile(join(cwd, 'a'), 'external'); return true; } });
   await changing('read_file', { path: 'a' });
   await assert.rejects(changing('write_file', { path: 'a', content: 'overwrite' }), /during approval/);

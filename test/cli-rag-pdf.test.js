@@ -9,7 +9,8 @@ import { RagEngine } from '../brain/rag.js';
 async function fixture(t, approve = async () => true) {
   const cwd = await mkdtemp(join(tmpdir(), 'flow-web-tools-'));
   t.after(() => rm(cwd, { recursive: true, force: true }));
-  return { cwd, execute: createTools({ cwd, approve, timeout: 2000 }) };
+  // Isolate the RAG store per test instead of writing into the shared brain database.
+  return { cwd, execute: createTools({ cwd, approve, timeout: 2000, ragDb: join(cwd, 'mem.db') }) };
 }
 
 /** A minimal one-page PDF, generated so the test needs no external asset. */
@@ -42,7 +43,7 @@ test('the sandboxed tool surface exposes memory, PDF and web tools', () => {
 
 test('save_to_rag requires approval, validates input and is retrievable', async t => {
   const { cwd, execute } = await fixture(t);
-  const denied = createTools({ cwd, approve: async () => false });
+  const denied = createTools({ cwd, approve: async () => false, ragDb: join(cwd, 'mem.db') });
   await assert.rejects(denied('save_to_rag', { category: 'notes', title: 'Blocked', content: 'x' }), /denied/);
 
   await assert.rejects(execute('save_to_rag', { category: 'notes', title: '', content: 'x' }), /Invalid title/);
@@ -50,8 +51,11 @@ test('save_to_rag requires approval, validates input and is retrievable', async 
   assert.equal(saved.saved, true);
   assert.ok(saved.id >= 1);
 
-  // The note must be readable back through the shared RAG engine.
-  const engine = new RagEngine(join(cwd, '.flow', 'rag.db'));
+  // The note must be readable back through the shared RAG engine. This used to read
+  // PROJECT/.flow/rag.db while save_to_rag wrote somewhere else entirely, so it passed
+  // while the feature was broken in production.
+  assert.equal(saved.path, join(cwd, 'mem.db'), 'save_to_rag must report the database it actually wrote');
+  const engine = new RagEngine(join(cwd, 'mem.db'));
   try {
     const hits = engine.search('streaming deltas reassembled', 3);
     assert.ok(hits.some(hit => hit.title === 'Streaming design'), 'saved note must be retrievable');

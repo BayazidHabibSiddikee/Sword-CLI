@@ -1,10 +1,19 @@
 import { lstat, readFile, readdir, mkdir, writeFile, realpath } from 'node:fs/promises';
 import { resolve, relative, sep, join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { fetchWeb, fetchWebRendered } from './webFetch.js';
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
 const LIMIT = 64000;
+const READ_LIMIT = 2 * 1024 * 1024;
 const PDF_LIMIT = 32 * 1024 * 1024;
+// Tool output is re-sent to the model on every subsequent request, so oversized
+// results cost quadratically over the rest of the run. Cap in characters, and keep
+// head+tail because build/test failures live at the end.
+const TOOL_OUTPUT_CHARS = 48000;
+const MUTATING_TOOLS = new Set(['write_file', 'edit_file', 'run_command', 'save_to_rag']);
 const blocked = name => name.startsWith('.') || ['node_modules', 'dist', 'build'].includes(name) || /\.(pem|key|db)$/i.test(name);
 const string = { type: 'string' };
 const definition = (name, description, properties, required = []) => ({ type: 'function', function: {
@@ -12,12 +21,12 @@ const definition = (name, description, properties, required = []) => ({ type: 'f
 } });
 export const toolDefinitions = [
   definition('list_files', 'List project files; skips hidden/build/dependency directories.', { path: string }),
-  definition('read_file', 'Read a text file before editing.', { path: string }, ['path']),
+  definition('read_file', 'Read a text file before editing. Use offset/limit for large files; omit them to read the whole file.', { path: string, offset: { type: 'integer' }, limit: { type: 'integer' } }, ['path']),
   definition('search_files', 'Search literal text across project files.', { query: string }, ['query']),
   definition('write_file', 'Create or overwrite text with approval; read existing files first.', { path: string, content: string }, ['path', 'content']),
   definition('edit_file', 'Replace exactly one occurrence in a previously read file with approval.', { path: string, old_text: string, new_text: string }, ['path', 'old_text', 'new_text']),
   definition('run_command', 'Run executable and arguments with approval. No shell parsing; NOT sandboxed.', { command: string, args: { type: 'array', items: string } }, ['command', 'args']),
-  definition('save_to_rag', 'Save a durable note to this project\'s memory (.flow/rag.db) for later sessions. Requires approval.', { category: string, title: string, content: string }, ['category', 'title', 'content']),
+  definition('save_to_rag', 'Save a durable note to this project\'s memory so later sessions can retrieve it. Requires approval.', { category: string, title: string, content: string }, ['category', 'title', 'content']),
   definition('read_pdf', 'Extract bounded text from a PDF inside the project before summarizing it.', { path: string, max_pages: { type: 'integer' } }, ['path']),
   definition('fetch_web', 'Fetch a public web page over HTTP and return readable Markdown. Fast; cannot execute JavaScript.', { url: string, max_chars: { type: 'integer' } }, ['url']),
   definition('fetch_web_rendered', 'Render a JavaScript-heavy or bot-protected public page with a stealth browser (slower) and return Markdown.', { url: string, max_chars: { type: 'integer' }, timeout_ms: { type: 'integer' } }, ['url'])
@@ -33,9 +42,42 @@ function bounded(value, min, max, fallback) {
   return Math.min(Math.max(Math.trunc(number), min), max);
 }
 
-export function createTools({ cwd, approve = async () => false, signal, timeout = 30000 }) {
+// Elide the middle, never the ends. Keep the notice inside the preserved head so it
+// survives the tighter cut applied later when the request is actually assembled.
+export function truncateMiddle(value, max = TOOL_OUTPUT_CHARS) {
+  const body = typeof value === 'string' ? value : JSON.stringify(value ?? null);
+  if (body.length <= max) return body;
+  const notice = chars => `\n[truncated ${chars} chars — head and tail preserved]\n`;
+  const probe = notice(body.length);
+  const half = Math.max(1, Math.floor((max - probe.length) / 2));
+  const used = half * 2 + notice(body.length - half * 2).length;
+  // Re-balance once so the final string really fits the cap.
+  const adjust = Math.max(0, Math.ceil((used - max) / 2));
+  const head = Math.max(1, half - adjust);
+  const tail = Math.max(1, Math.min(half + adjust, body.length - head));
+  return `${body.slice(0, head)}${notice(body.length - head - tail)}${body.length - tail > 0 ? body.slice(-tail) : ''}`;
+}
+
+// Match a file's line endings on both sides of an edit, or CRLF files never match.
+export function normalizeEol(text, eol) { return eol === '\r\n' ? text.replace(/\r?\n/g, '\r\n') : text.replace(/\r\n/g, '\n'); }
+
+export function createTools({ cwd, approve = async () => false, signal, timeout = 30000, grants = null, ragDb = join(__dirname, 'brain', 'rag.db') }) {
   const root = resolve(cwd);
+  const ragDbPath = ragDb;
   let snapshots = new Map();
+  // Hold a live reference, not a copy: the approval prompt mutates `grants` as the
+  // user grants tools mid-session, and a snapshot taken here would never see it.
+  const granted = grants?.tools instanceof Set ? grants.tools : new Set(grants?.tools ?? []);
+  const allowAll = () => granted.has('*');
+  // Deny-overrides-allow, and ALLOW is deliberately non-terminal: a later deny rule
+  // can still override an earlier allow, so we never stop evaluating on the first match.
+  const denies = grants?.deniedTools instanceof Set ? grants.deniedTools : new Set(grants?.deniedTools ?? []);
+  async function approved(proposal) {
+    const tool = proposal.tool;
+    if (denies.has(tool)) throw new Error(`Tool ${tool} is denied by the current approval policy`);
+    if (allowAll() || granted.has(tool)) return true;
+    return (await approve(structuredClone(proposal))) === true;
+  }
   async function checked(input = '.', allowMissing = false) {
     text(input, 'path');
     const full = resolve(root, input);
@@ -51,9 +93,14 @@ export function createTools({ cwd, approve = async () => false, signal, timeout 
     }
     return full;
   }
-  async function read(full) {
+  async function read(full, { range = false } = {}) {
     const info = await lstat(full);
-    if (!info.isFile() || info.size > LIMIT) throw new Error('File is not bounded text');
+    if (!info.isFile()) throw new Error('Not a regular file');
+    // Whole-file reads (edits, search) stay bounded; ranged reads may go larger.
+    const cap = range ? READ_LIMIT : LIMIT;
+    if (info.size > cap) throw new Error(range
+      ? `File exceeds ${READ_LIMIT} bytes; narrow it with offset/limit`
+      : 'File is not bounded text — read it with offset/limit, or use search_files');
     const content = await readFile(full, 'utf8');
     if (content.includes('\0')) throw new Error('Binary file refused');
     return content;
@@ -76,7 +123,11 @@ export function createTools({ cwd, approve = async () => false, signal, timeout 
   }
   async function permit(proposal) {
     signal?.throwIfAborted();
-    if (await approve(structuredClone(proposal)) !== true) throw new Error('Action denied by user');
+    if (await approved(proposal) !== true) {
+      // A deliberate "no" is not a failure. Say so explicitly, otherwise the model
+      // reads it as a bug and retries the identical call.
+      throw new Error('Action denied by user. NOT a tool or system failure — clarify with the user before retrying.');
+    }
     signal?.throwIfAborted();
   }
   async function change(name, args) {
@@ -90,8 +141,16 @@ export function createTools({ cwd, approve = async () => false, signal, timeout 
     else {
       const old = text(args.old_text, 'old_text');
       text(args.new_text, 'new_text', true);
-      if (before === null || before.split(old).length !== 2) throw new Error('Old text must match exactly once');
-      after = before.replace(old, () => args.new_text);
+      if (before === null) throw new Error('File does not exist; use write_file to create it');
+      const eol = before.includes('\r\n') ? '\r\n' : '\n';
+      const needle = normalizeEol(old, eol);
+      const replacement = normalizeEol(args.new_text, eol);
+      const hits = before.split(needle).length - 1;
+      // Ambiguity is fatal, never a guess: picking one of several matches silently
+      // corrupts the wrong occurrence.
+      if (hits === 0) throw new Error('Old text not found in file (line endings are normalised; check whitespace)');
+      if (hits > 1) throw new Error(`Old text matches ${hits} places; include more surrounding context so it is unique`);
+      after = before.replace(needle, () => replacement);
       text(after, 'result', true);
     }
     await permit({ tool: name, path: full, before, after });
@@ -108,13 +167,16 @@ export function createTools({ cwd, approve = async () => false, signal, timeout 
     const category = text(args.category, 'category');
     const title = text(args.title, 'title');
     const content = text(args.content, 'content', true);
-    await mkdir(join(root, '.flow'), { recursive: true, mode: 0o700 });
-    await permit({ tool: 'save_to_rag', path: join('.flow', 'rag.db'), category, title });
+    // Write to the SAME database the agent searches. The old code created a second
+    // project-local .flow/rag.db, so every save was invisible to retrieval for the
+    // rest of the session — a silent feature that never worked.
+    await mkdir(dirname(ragDbPath), { recursive: true });
+    await permit({ tool: 'save_to_rag', path: ragDbPath, category, title });
     const { RagEngine } = await import('../brain/rag.js');
-    const engine = new RagEngine(join(root, '.flow', 'rag.db'));
+    const engine = new RagEngine(ragDbPath);
     try {
       const id = engine.insertKnowledge(category.slice(0, 120), title.slice(0, 300), content, 'swordcli');
-      return { saved: true, id: Number(id), category: category.slice(0, 120), path: join('.flow', 'rag.db') };
+      return { saved: true, id: Number(id), category: category.slice(0, 120), path: ragDbPath };
     } finally {
       try { engine.db?.close(); } catch { /* best effort */ }
     }
@@ -143,9 +205,23 @@ export function createTools({ cwd, approve = async () => false, signal, timeout 
     if (name === 'list_files') return { files: await files(args.path ?? '.'), limit: 500 };
     if (name === 'read_file') {
       const full = await checked(text(args.path ?? '.', 'path'));
-      const content = await read(full);
-      snapshots = new Map([...snapshots, [full, content]]);
-      return { path: full, content };
+      const hasRange = args.offset !== undefined || args.limit !== undefined;
+      const content = await read(full, { range: hasRange });
+      if (!hasRange) {
+        snapshots = new Map([...snapshots, [full, content]]);
+        return { path: full, content, lines: content.split('\n').length };
+      }
+      // A partial read must not become the edit baseline, or `change()` would compare
+      // a fragment against the whole file and always report "File changed since read".
+      const all = content.split('\n');
+      const offset = bounded(args.offset, 0, Math.max(0, all.length - 1), 0);
+      const limit = bounded(args.limit, 1, 4000, 400);
+      const slice = all.slice(offset, offset + limit);
+      return {
+        path: full, offset, limit, lines: slice.length, total_lines: all.length,
+        truncated: offset + limit < all.length,
+        content: slice.join('\n')
+      };
     }
     if (name === 'search_files') {
       const query = text(args.query, 'query');

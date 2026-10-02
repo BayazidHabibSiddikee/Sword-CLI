@@ -40,6 +40,59 @@ export function friendlyError(error, { aborted = false } = {}) {
   return `Error: ${error?.message ?? error}`;
 }
 
+// Longest common prefix/suffix, so a one-line edit shows one line, not the whole file.
+// Returns LINE indexes; the character offsets are only used to derive them.
+function changedRange(before, after) {
+  const a = String(before).split('\n');
+  const b = String(after).split('\n');
+  let head = 0;
+  const maxHead = Math.min(a.length, b.length);
+  while (head < maxHead && a[head] === b[head]) head++;
+  let tail = 0;
+  const maxTail = Math.min(a.length - head, b.length - head);
+  while (tail < maxTail && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;
+  return { start: head, beforeEnd: a.length - tail, afterEnd: b.length - tail };
+}
+
+const DIFF_CONTEXT = 3;
+const DIFF_MAX_LINES = 24;
+
+export function unifiedDiff(before, after, maxLines = DIFF_MAX_LINES) {
+  // A create has no "before" side, so nothing should be reported as removed.
+  const creating = before === null || before === undefined;
+  if (!creating && before === after) return [];
+  const a = creating ? [] : String(before).split('\n');
+  const b = after === null || after === undefined ? [] : String(after).split('\n');
+  if (creating && b.length === 0) return [];
+  const { start, beforeEnd, afterEnd } = creating
+    ? { start: 0, beforeEnd: 0, afterEnd: b.length }
+    : changedRange(before, after);
+  if (start >= beforeEnd && start >= afterEnd) return [];
+  const lo = creating ? 0 : Math.max(0, start - DIFF_CONTEXT);
+  const hiBefore = Math.min(a.length, beforeEnd + DIFF_CONTEXT);
+  const hiAfter = Math.min(b.length, afterEnd + DIFF_CONTEXT);
+  const lines = [];
+  let ai = lo, bi = lo;
+  while (ai < hiBefore || bi < hiAfter) {
+    if (ai < hiBefore && bi < hiAfter && a[ai] === b[bi]) { lines.push(`  ${a[ai]}`); ai++; bi++; continue; }
+    if (ai < hiBefore) { lines.push(chalk.red(`- ${a[ai]}`)); ai++; }
+    if (bi < hiAfter) { lines.push(chalk.green(`+ ${b[bi]}`)); bi++; }
+  }
+  if (lines.length <= maxLines) return lines;
+  const head = Math.ceil(maxLines / 2);
+  return [
+    ...lines.slice(0, head),
+    chalk.dim(`  … ${lines.length - maxLines} more diff lines`),
+    ...lines.slice(lines.length - (maxLines - head))
+  ];
+}
+
+function diffBlock(before, after) {
+  const lines = unifiedDiff(before, after);
+  if (!lines.length) return [];
+  return [chalk.dim('  ───'), ...lines, chalk.dim('  ───')];
+}
+
 export function approvePrompt(proposal) {
   const { tool, path: pathName, before = null, after = null, command, args, timeout } = proposal;
   const lines = [''];
@@ -63,6 +116,7 @@ export function approvePrompt(proposal) {
   } else {
     lines.push(`  ${chalk.dim(`${tool}: ${JSON.stringify(proposal)}`)}`);
   }
+  if (tool === 'write_file' || tool === 'edit_file') lines.push(...diffBlock(before, after));
   lines.push('');
   return lines.join('\n');
 }
@@ -131,7 +185,7 @@ export const KNOWN_COMMANDS = [
   'clear', 'status', 'models', 'provider', 'providers',
   'rag', 'rag add', 'rag search',
   'web', 'download', 'scrape',
-  'tasks', 'tasks add', 'tasks list', 'tasks done', 'tasks stats',
+  // no /tasks here: it is implemented in cli/tui.js only, so flow.js must not suggest it
   'session', 'history', 'brain', 'info', 'provider',
   'model', 'character', 'char', 'c',
   'rag add', 'rag search',

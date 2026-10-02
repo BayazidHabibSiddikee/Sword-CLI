@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
-import { realpath, stat } from 'node:fs/promises';
+import { realpath, stat, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import chalk from 'chalk';
@@ -23,7 +23,8 @@ import {
 
 // ── RAG + Session singletons ───────────────────────────────────────────────────
 const __dirname = import.meta.dirname; // Node ≥20.6; safe in this project
-const ragDb = new RagEngine(join(__dirname, 'brain', 'rag.db'));
+const ragDbPath = join(__dirname, 'brain', 'rag.db');
+const ragDb = new RagEngine(ragDbPath);
 let localSessionHistory = [];   // messages loaded from --session file at startup
 
 // ── Custom providers ───────────────────────────────────────────────────────────
@@ -68,6 +69,19 @@ function createG4fRequest(tools, signal, onToken) {
 // Character brain modules for team-mode round-robin
 const TEAM_CHARACTERS = ['izuku', 'kael', 'mahina', 'muhan', 'sable', 'turing', 'plastos', 'prince_rishad', 'monk_maecenas', 'ada_vance'];
 const WRITER_CHARACTERS = ['izuku', 'kael'];
+// Three character ids do not match their module filenames, so resolve by prefix
+// instead of guessing `${char}.js` — the old guess silently imported nothing and
+// `catch {}` swallowed it, making --team a no-op that still cost 13 LLM calls.
+async function brainPrompt(charName) {
+  const dir = join(__dirname, 'brain');
+  let entries = [];
+  try { entries = await readdir(dir); } catch { return null; }
+  const stem = charName.replace(/_.*$/, '');
+  const file = entries.find(name => name.endsWith('.js') && (name === `${charName}.js` || name.startsWith(`${stem}_`) || name.startsWith(`${charName}_`)));
+  if (!file) return null;
+  const mod = await import(join(dir, file));
+  return mod.SYSTEM_PROMPT || null;
+}
 
 const HELP = `SwordCLI — project coding assistant
 Usage: sword [--cwd DIRECTORY] [--prompt TEXT] [--json] [--session NAME]
@@ -86,7 +100,10 @@ Usage: sword [--cwd DIRECTORY] [--prompt TEXT] [--json] [--session NAME]
 Interactive: /help /clear /status /team /web /exit
 The session never ends by itself: Ctrl+D exits, Ctrl+C cancels the current turn
 (and exits when pressed twice at the prompt), /exit and /quit exit.
-Every file edit and command requires explicit approval. Commands are NOT sandboxed.
+Every file edit and command requires approval. At the prompt: y allows once,
+a allows that tool for the rest of the session, A allows every write and command
+for this session, N denies. Grants live only in this process and are never written
+to disk. Commands are NOT sandboxed.
 Configuration: OPENAI_BASE_URL, OPENAI_API_KEY, OPENAI_MODEL; PROXY_HOST fallback.
 Model choice: --model, else SWORD_MODEL, else the strongest model the backend
 advertises, else backend auto-routing. The backend's balanced routing strategy
@@ -114,6 +131,11 @@ async function main() {
   if (values.local && values.shared) throw new Error('--local and --shared are mutually exclusive; choose one session mode');
   let swordEnv;
   let useG4f = false;
+  // Session-scoped approval grants. Approving once per write made a single task cost
+  // ~20 keystrokes, which trained people to type blind. Never persisted to disk.
+  const grants = { tools: new Set(), deniedTools: new Set() };
+  const grantTool = tool => { if (tool) grants.tools.add(tool); };
+  const grantAll = () => { for (const t of ['write_file', 'edit_file', 'run_command', 'save_to_rag']) grants.tools.add(t); };
   try {
     swordEnv = await configureSwordBackend(process.env, readLocalUnifiedKey, { allowSilentFallback: true });
     useG4f = swordEnv._swordG4fFallback === true;
@@ -218,7 +240,11 @@ async function main() {
       console.error(`\n`);
       console.error(approvePrompt(proposal));
       try {
-        return (await rl.question('Allow this one action? [y/N] ', { signal: active.signal })).trim().toLowerCase() === 'y';
+        const answer = (await rl.question('Allow? [y] once  [a] always allow this tool  [A] allow all writes/commands  [N] deny\n> ', { signal: active.signal })).trim();
+        const choice = answer.toLowerCase();
+        if (choice === 'a' || choice === 'always') { grantTool(proposal.tool); return true; }
+        if (choice === 'A') { grantAll(); return true; }
+        return choice === 'y' || choice === 'yes';
       } catch { return false; }
     };
     try {
@@ -254,7 +280,7 @@ async function main() {
       let result;
       if (teamMode) {
         if (!values.json && interactive) console.error(chalk.dim('\n[Team] Round-robin discussion starting...\n'));
-        const execute = createTools({ cwd, approve, signal: active.signal, timeout: 120000 });
+        const execute = createTools({ cwd, approve, signal: active.signal, timeout: 120000, grants, ragDb });
         const discussion = [];
         let teamHistory = [...inputs];
         const maxPerAgent = 1500;
@@ -262,8 +288,7 @@ async function main() {
         for (let i = 0; i < TEAM_CHARACTERS.length; i++) {
           const charName = TEAM_CHARACTERS[i];
           try {
-            const brainModule = await import(join('..', 'brain', `${charName}.js`));
-            const charPrompt = brainModule.SYSTEM_PROMPT || `You are ${charName}. Contribute your perspective concisely.`;
+            const charPrompt = await brainPrompt(charName) || `You are ${charName}. Contribute your perspective concisely.`;
             const agentInputs = [
               { role: 'system', content: `${charPrompt}\n\nYou are one of 10 agents discussing this request. Be specific and actionable. Max ${maxPerAgent} chars.` },
               ...teamHistory.slice(1),   // skip system for brevity
@@ -286,8 +311,7 @@ async function main() {
         // Writer agent synthesizes the discussion into a final response
         const writerName = WRITER_CHARACTERS[0];
         try {
-          const writerBrain = await import(join('..', 'brain', `${writerName}.js`));
-          const writerPrompt = writerBrain.SYSTEM_PROMPT || `You are ${writerName}. Synthesize team discussions into clear final responses.`;
+          const writerPrompt = await brainPrompt(writerName) || `You are ${writerName}. Synthesize team discussions into clear final responses.`;
           const writerInputs = [
             { role: 'system', content: `${writerPrompt}\n\nYou are the designated writer. Review the team discussion below and produce a single coherent final response that addresses the user's request. Do not reference the team discussion process.` },
             { role: 'system', content: 'TEAM DISCUSSION TRANSCRIPT:\n' +
@@ -311,7 +335,7 @@ async function main() {
         const checkpoint = shared
           ? messages => { completed = [...history, { role: 'user', content: prompt }, ...messages.slice(inputs.length)]; }
           : values.session ? messages => { completed = messages.slice(1); } : () => {};
-        const execute = createTools({ cwd, approve, signal: active.signal, timeout: 120000 });
+        const execute = createTools({ cwd, approve, signal: active.signal, timeout: 120000, grants, ragDb });
         // Stream tokens to stderr only for a human at a terminal, so --json output and
         // piped stdout stay clean. The first token retires the indicator.
         const onToken = interactive && !values.json
@@ -367,11 +391,15 @@ async function main() {
       indicator?.stop();
       indicator = null;
       if (!cancelled) {
+        // A coding turn that ends in fallback prose has produced nothing useful, but
+        // recovery_<ts> sessions were already written above — point the user at them
+        // instead of letting the chat-only reply look like the whole result.
+        const saved = completed && completed.length > history.length;
         try {
           console.error(`\n${fallbackNotice()}`);
           const res = await attemptFallback(prompt);
-          if (values.json) { console.log(JSON.stringify({ response: res })); }
-          else if (interactive) console.log(markdownLite(res, true));
+          if (values.json) { console.log(JSON.stringify({ response: res, degraded: true, toolsUsed: false, sessionSaved: saved })); }
+          else if (interactive) { console.log(markdownLite(res, true)); console.error(saved ? '\nActions completed before the failure are in the saved recovery session.' : ''); }
           else console.log(safe(res));
           return;
         } catch { throw error; }
@@ -534,7 +562,6 @@ Usage: /provider add <name> <baseUrl> <apiKey> <model>
         '  /web <url>      Fetch web page\n' +
         '  /download <url>   Download file\n' +
         '  /scrape <url>    Fetch JS-rendered page\n' +
-        '  /tasks          Manage todos (add, list, done, stats)\n' +
         '  /session        Session info\n' +
         '  /history        Conversation history\n' +
         '  /brain          Current character info\n' +
