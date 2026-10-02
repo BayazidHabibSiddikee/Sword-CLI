@@ -85,6 +85,43 @@ sword.mjs                          # Unified launcher (manages all services)
 | Ctrl+C | Cancel current turn (press again to exit) |
 | Ctrl+D | Exit immediately |
 
+## Channels — send output to Telegram, Discord, Slack, webhooks
+
+The dashboard's **Channels** page (`/connections`) saves a destination and sends
+messages to it. Telegram is fully wired to the Bot API; Discord and Slack use their
+incoming webhooks; a generic webhook posts JSON.
+
+```bash
+./sword.mjs up            # API :3001, web UI :3002
+# open http://localhost:3002/connections
+```
+
+To add Telegram: create a bot with **@BotFather**, put the bot token in the form,
+and set the target to your chat id (message the bot once, or use `@channelname`).
+Hit **Verify** (`getMe`) then **Send**.
+
+- Destinations are stored in `swordcli/server/data/channels.json` (mode `0600`).
+- The bot token is **write-only**: the API never returns it, only `hasSecret`.
+- Each connection shows an OpenClaw-style session key,
+  `agent:<agentId>:<platform>:<kind>:<target>` (e.g. `agent:main:telegram:chat:123456789`).
+- User-supplied webhook URLs must be `https` and must not resolve to a private or
+  loopback host (SSRF guard).
+
+REST surface: `GET/POST /api/channels`, `DELETE /api/channels/:id`,
+`POST /api/channels/:id/verify`, `POST /api/channels/:id/send`.
+
+## Vendored skills (steipete/agent-scripts)
+
+`vendor/agent-scripts/` is a checkout of [steipete/agent-scripts](https://github.com/steipete/agent-scripts),
+providing the OpenClaw-era skills — `openclaw-relay`, `telecrawl`, `whatsapp`,
+`discord-clawd`, `twilio-sms` and more. `cli/externalSkills.js` discovers
+`vendor/agent-scripts/skills` alongside the home-directory roots, so these are
+available with no global sync step. Discover and load them with the CLI:
+
+```bash
+node --input-type=module -e "import {discoverSkills} from './cli/externalSkills.js'; console.log((await discoverSkills()).map(s=>s.name).join('\n'))"
+```
+
 ## Character Personas
 
 | Character | Role | Expertise |
@@ -163,7 +200,7 @@ character-flow/
 │   ├── brain/             # 10 character brains (BM25 + knowledge)
 │   ├── skills/            # Git, file_edit, tasks, sessions, bridge
 │   └── tui.js             # Alternative TUI (deprecated)
-├── swordcli/              # Main API server (TypeScript)
+├── swordcli/              # Main API server + web UI (TypeScript)
 │   ├── server/            # Express + /v1/* + /api/* routes
 │   ├── client/            # Vite React web UI
 │   └── server/data/       # SQLite (keys, models, sessions)
@@ -173,7 +210,7 @@ character-flow/
 ├── data/                  # Sessions, RAG, tasks databases
 ├── docs/                  # Architecture docs
 ├── scripts/               # Utility scripts
-├── web/                   # Vite React web UI
+├── vendor/agent-scripts/  # Vendored steipete/agent-scripts skills (openclaw-relay, telecrawl, …)
 ├── sword.mjs              # Unified launcher
 └── package.json
 ```
