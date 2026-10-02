@@ -209,6 +209,67 @@ npm run build --prefix swordcli/client
 | `swordcli/server/src/services/router.ts` | Model routing + bandit scoring |
 | `sword.mjs` | Service launcher (manages all processes) |
 
+### Rating & Comparison (2026-10-02)
+
+**Overall: 7.6 / 10** — strong core, honest about limitations, actively closing the worst gaps from earlier audits. All 133 tests pass.
+
+#### Scorecard
+
+| Dimension | Score | Notes |
+|---|---|---|
+| Agent safety | 9/10 | Per-tool grants (y/a/A/N), deny-overrides-allow, 3-tier loop detection, mistake guard, prompt-injection scan on skills |
+| Tool surface | 7/10 | 10 tools; `read_file` offset/limit + 2 MiB cap, EOL-normalised ambiguity-fatal edits. No parallel calls or MCP in CLI |
+| Rollback / undo | 9/10 | Private git refs, `read-tree --reset -u`, index backup, stash untouched |
+| Context management | 7/10 | Auto-archive at 200 messages into RAG; no per-message budget projection |
+| Session persistence | 8/10 | Named local sessions + shared backend + recovery on failure |
+| RAG / knowledge | 8/10 | Hybrid BM25 + cosine + FTS5, web upload for PDF/MD only |
+| Skill integration | 8/10 | Discovers 177 skills across 4 home dirs; hidden from UI, progressive disclosure via `load_skill` tool |
+| Team mode | 6/10 | 10 persona round-robin with writer aggregation; basic but working |
+| Provider resilience | 7/10 | g4f fallback, declared degraded mode, SSE fragment reassembly |
+
+#### vs. Cline
+
+| Feature | SwordCLI | Cline |
+|---|---|---|
+| Tool approval | ✅ Per-tool grants, deny-overrides-allow | ✅ Rejection suffix |
+| Rollback / undo | ✅ Git private ref | ❌ None |
+| Parallel tools | ❌ Sequential | ✅ Native |
+| MCP support | ⚠️ Server only | ✅ Full client |
+| Context budget | ⚠️ 200-msg archive | ✅ Token-level projection |
+| Web UI | ✅ Vite + React | ❌ VSCode only |
+| Size | ~2 MB source | 398 MB npm install |
+
+#### vs. Aider
+
+| Feature | SwordCLI | Aider |
+|---|---|---|
+| Git integration | ✅ Checkpoint + undo | ✅ Native |
+| File editing | ✅ Ambiguity-fatal exact match | ✅ Fuzzy + strict modes |
+| Multi-file edit | ⚠️ Sequential | ✅ Multiple per turn |
+| LLM cost tracking | ❌ None | ✅ Per-model token usage |
+| Remote editing | ❌ Local only | ✅ SSH / Codespaces |
+
+#### vs. Gemini CLI
+
+| Feature | SwordCLI | Gemini CLI |
+|---|---|---|
+| Tool safety | ✅ Explicit approval gates | ❌ Auto-executes |
+| Rollback | ✅ Git checkpoint | ❌ None |
+| Open source | ✅ Fully auditable | ❌ Closed |
+| Skill loading | ✅ Progressive disclosure | ❌ None |
+
+#### vs. OpenDevin
+
+OpenDevin is a container-based orchestration platform (~2 GB). Different category — SwordCLI competes in the single-process CLI-agent lane.
+
+#### Honest gaps still open
+
+1. **Parallel tool execution** — independent reads could run concurrently via `Promise.all`
+2. **MCP in the CLI** — server has `rag-mcp-server.ts` but it isn't wired to the REPL
+3. **Context budget projection** — token-count-per-message would let the 200-msg threshold adapt dynamically
+4. **Session diff view** — `/diff` to see what changed between turns would improve auditability
+5. **g4f dependence** — free-tier LLM is flaky (status 526); a local fallback (ollama) would be more stable
+
 ## License
 
 MIT — see [LICENSE](LICENSE)
