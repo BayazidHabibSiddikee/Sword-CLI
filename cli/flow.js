@@ -16,6 +16,7 @@ import { RagEngine } from '../brain/rag.js';
 import { sessions } from '../skills/sessions.js';
 import * as checkpoints from './checkpoint.js';
 import { listProviders } from './providers.js';
+import { archiveMessages, archiveHint, HISTORY_THRESHOLD } from './historyArchive.js';
 import { G4F } from 'g4f';
 import {
   cancelMessage, timeoutMessage, toolLine, friendlyError,
@@ -196,7 +197,7 @@ async function main() {
     }
   }
   await ensureSkillBlock(cwd);
-  const system = { role: 'system', content: buildSystemPrompt(cwd, shared?.mode || values.mode) + (_skillBlock ? `\n\n${_skillBlock}` : '') };
+  const system = { role: 'system', content: buildSystemPrompt(cwd, shared?.mode || values.mode) + (_skillBlock ? `\n\n${_skillBlock}` : '') + archiveHint(0) };
   const provider = { ...config, model: values.model || shared?.model || selectedModel };
   let history = shared ? shared.messages : values.session ? await loadSession(cwd, values.session) : [];
   // Merge local --session history so prior turns are visible to the LLM.
@@ -212,6 +213,7 @@ async function main() {
   let indicator = null;
   let active;
   let teamMode = Boolean(values.team);
+  let archivedCount = 0;
   // ── Session lifetime ────────────────────────────────────────────────────────
   // The prompt only ends on an explicit request: /exit, /quit, Ctrl+D or a
   // confirmed Ctrl+C. Nothing else — a failing command, a closed stdin, an
@@ -394,6 +396,18 @@ async function main() {
         }
       }
       history = nextHistory;
+      // Archive messages that exceed the retention window so they stop consuming
+      // context while staying searchable in the RAG engine.
+      if (!shared && history.length > HISTORY_THRESHOLD) {
+        try {
+          const { archived, keepCount } = await archiveMessages(history, HISTORY_THRESHOLD);
+          if (archived > 0) {
+            archivedCount += archived;
+            history = keepCount > 0 ? history.slice(-keepCount) : [];
+            console.error(`[sword] Archived ${archived} turn(s) into knowledge library; kept ${history.length} recent messages.`);
+          }
+        } catch { /* best-effort; don't break the session */ }
+      }
       if (values.session) await saveSession(cwd, values.session, history);
       indicator?.stop();
       indicator = null;
