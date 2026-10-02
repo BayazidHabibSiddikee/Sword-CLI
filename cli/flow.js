@@ -8,11 +8,13 @@ import { providerConfig, createRequest, runTurn, loadSession, saveSession } from
 import { attemptFallback, fallbackNotice } from './providerFallback.js';
 import { createTools, toolDefinitions } from './tools.js';
 import { buildSystemPrompt, buildMemoryBlock } from './prompts.js';
+import { discoverSkills, buildCompactIndex } from './externalSkills.js';
 import { configureSwordBackend, readLocalUnifiedKey } from './backend.js';
 import { createSharedClient, recentContext } from './shared.js';
 import { resolveModel } from './model.js';
 import { RagEngine } from '../brain/rag.js';
 import { sessions } from '../skills/sessions.js';
+import * as checkpoints from './checkpoint.js';
 import { listProviders } from './providers.js';
 import { G4F } from 'g4f';
 import {
@@ -26,6 +28,20 @@ const __dirname = import.meta.dirname; // Node ≥20.6; safe in this project
 const ragDbPath = join(__dirname, 'brain', 'rag.db');
 const ragDb = new RagEngine(ragDbPath);
 let localSessionHistory = [];   // messages loaded from --session file at startup
+
+// ── External-skill index (module-level cache, invalidated on cwd change) ──────
+let _skillCache = null;
+let _skillCacheCwd = '';
+let _skillBlock = '';
+async function ensureSkillBlock(cwd) {
+  if (_skillCache && _skillCacheCwd === cwd) return;
+  _skillCacheCwd = cwd;
+  try {
+    const skills = await discoverSkills();
+    _skillBlock = buildCompactIndex(skills) || '';
+    _skillCache = skills;
+  } catch { _skillBlock = ''; _skillCache = []; }
+}
 
 // ── Custom providers ───────────────────────────────────────────────────────────
 // A custom provider is opt-in only. It is used when the caller explicitly names one
@@ -136,6 +152,14 @@ async function main() {
   const grants = { tools: new Set(), deniedTools: new Set() };
   const grantTool = tool => { if (tool) grants.tools.add(tool); };
   const grantAll = () => { for (const t of ['write_file', 'edit_file', 'run_command', 'save_to_rag']) grants.tools.add(t); };
+  // Kept so /undo can reach the checkpoint of the most recent turn.
+  let lastExecute = null;
+  // Bind cwd once: the checkpoint module keeps `cwd` explicit (so it stays testable
+  // outside a repo) while the tool layer wants a bare `create(label)` callback.
+  const checkpointApi = {
+    create: label => checkpoints.create(cwd, label),
+    restore: snap => checkpoints.restore(cwd, snap)
+  };
   try {
     swordEnv = await configureSwordBackend(process.env, readLocalUnifiedKey, { allowSilentFallback: true });
     useG4f = swordEnv._swordG4fFallback === true;
@@ -171,7 +195,8 @@ async function main() {
       client = null;
     }
   }
-  const system = { role: 'system', content: buildSystemPrompt(cwd, shared?.mode || values.mode) };
+  await ensureSkillBlock(cwd);
+  const system = { role: 'system', content: buildSystemPrompt(cwd, shared?.mode || values.mode) + (_skillBlock ? `\n\n${_skillBlock}` : '') };
   const provider = { ...config, model: values.model || shared?.model || selectedModel };
   let history = shared ? shared.messages : values.session ? await loadSession(cwd, values.session) : [];
   // Merge local --session history so prior turns are visible to the LLM.
@@ -280,7 +305,8 @@ async function main() {
       let result;
       if (teamMode) {
         if (!values.json && interactive) console.error(chalk.dim('\n[Team] Round-robin discussion starting...\n'));
-        const execute = createTools({ cwd, approve, signal: active.signal, timeout: 120000, grants, ragDb });
+        const execute = createTools({ cwd, approve, signal: active.signal, timeout: 120000, grants, ragDb, checkpoint: checkpointApi });
+        lastExecute = execute;
         const discussion = [];
         let teamHistory = [...inputs];
         const maxPerAgent = 1500;
@@ -335,7 +361,8 @@ async function main() {
         const checkpoint = shared
           ? messages => { completed = [...history, { role: 'user', content: prompt }, ...messages.slice(inputs.length)]; }
           : values.session ? messages => { completed = messages.slice(1); } : () => {};
-        const execute = createTools({ cwd, approve, signal: active.signal, timeout: 120000, grants, ragDb });
+        const execute = createTools({ cwd, approve, signal: active.signal, timeout: 120000, grants, ragDb, checkpoint: checkpointApi });
+        lastExecute = execute;
         // Stream tokens to stderr only for a human at a terminal, so --json output and
         // piped stdout stay clean. The first token retires the indicator.
         const onToken = interactive && !values.json
@@ -562,12 +589,32 @@ Usage: /provider add <name> <baseUrl> <apiKey> <model>
         '  /web <url>      Fetch web page\n' +
         '  /download <url>   Download file\n' +
         '  /scrape <url>    Fetch JS-rendered page\n' +
+        '  /undo          Roll back every file change made in the last turn\n' +
         '  /session        Session info\n' +
         '  /history        Conversation history\n' +
         '  /brain          Current character info\n' +
         '  /model <name>     Set model\n' +
         '  /character <name> Switch character\n' +
         '  /exit, /quit      Exit SwordCLI\n');
+      return;
+    }
+
+    if (line === '/undo') {
+      const ctrl = lastExecute?.checkpoint;
+      if (!ctrl?.pending) {
+        console.error('Nothing to roll back: the last turn changed no approved files.');
+        return;
+      }
+      const changed = await checkpoints.changedSince(cwd, ctrl.snapshot);
+      const result = await ctrl.undo();
+      if (!result.ok) { console.error(`Rollback failed: ${result.reason}`); return; }
+      const removed = result.removed?.length ? `, removed ${result.removed.length} new file(s)` : '';
+      console.error(`Rolled back the last turn${removed}.` +
+        (changed?.total ? ` Reverted ${changed.tracked} modified, ${changed.untracked} added.` : ''));
+      // The agent's view of the tree is now stale, so drop its history rather than
+      // let it reason about files that no longer exist.
+      history = [];
+      console.error('Conversation history cleared; the agent must re-read the project.');
       return;
     }
 

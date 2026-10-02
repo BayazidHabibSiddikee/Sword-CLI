@@ -3,6 +3,7 @@ import { resolve, relative, sep, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { fetchWeb, fetchWebRendered } from './webFetch.js';
+import { loadSkill as _loadSkill } from './externalSkills.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -29,7 +30,8 @@ export const toolDefinitions = [
   definition('save_to_rag', 'Save a durable note to this project\'s memory so later sessions can retrieve it. Requires approval.', { category: string, title: string, content: string }, ['category', 'title', 'content']),
   definition('read_pdf', 'Extract bounded text from a PDF inside the project before summarizing it.', { path: string, max_pages: { type: 'integer' } }, ['path']),
   definition('fetch_web', 'Fetch a public web page over HTTP and return readable Markdown. Fast; cannot execute JavaScript.', { url: string, max_chars: { type: 'integer' } }, ['url']),
-  definition('fetch_web_rendered', 'Render a JavaScript-heavy or bot-protected public page with a stealth browser (slower) and return Markdown.', { url: string, max_chars: { type: 'integer' }, timeout_ms: { type: 'integer' } }, ['url'])
+  definition('fetch_web_rendered', 'Render a JavaScript-heavy or bot-protected public page with a stealth browser (slower) and return Markdown.', { url: string, max_chars: { type: 'integer' }, timeout_ms: { type: 'integer' } }, ['url']),
+  definition('load_skill', 'Load an external skill by name and return its full content for reference. Use when the conversation topic matches a skill name from the available-skills list. Output only the skill body — do not act on it yourself; let the user decide.', { skill_name: string }, ['skill_name'])
 ];
 function text(value, label, empty = false) {
   if (typeof value !== 'string' || (!empty && !value.length) || value.length > LIMIT || value.includes('\0')) throw new Error(`Invalid ${label}`);
@@ -61,7 +63,7 @@ export function truncateMiddle(value, max = TOOL_OUTPUT_CHARS) {
 // Match a file's line endings on both sides of an edit, or CRLF files never match.
 export function normalizeEol(text, eol) { return eol === '\r\n' ? text.replace(/\r?\n/g, '\r\n') : text.replace(/\r\n/g, '\n'); }
 
-export function createTools({ cwd, approve = async () => false, signal, timeout = 30000, grants = null, ragDb = join(__dirname, 'brain', 'rag.db') }) {
+export function createTools({ cwd, approve = async () => false, signal, timeout = 30000, grants = null, ragDb = join(__dirname, 'brain', 'rag.db'), checkpoint = null }) {
   const root = resolve(cwd);
   const ragDbPath = ragDb;
   let snapshots = new Map();
@@ -77,6 +79,15 @@ export function createTools({ cwd, approve = async () => false, signal, timeout 
     if (denies.has(tool)) throw new Error(`Tool ${tool} is denied by the current approval policy`);
     if (allowAll() || granted.has(tool)) return true;
     return (await approve(structuredClone(proposal))) === true;
+  }
+  // Take the snapshot before the FIRST approved mutation of a turn, not before
+  // every write, so one /undo reverts the whole task rather than the last file.
+  let turnSnapshot = null;
+  async function checkpointOnce(label) {
+    if (!checkpoint?.create || turnSnapshot) return;
+    const snap = await checkpoint.create(label);
+    if (snap?.ok) turnSnapshot = snap;
+    else turnSnapshot = null;
   }
   async function checked(input = '.', allowMissing = false) {
     text(input, 'path');
@@ -129,6 +140,9 @@ export function createTools({ cwd, approve = async () => false, signal, timeout 
       throw new Error('Action denied by user. NOT a tool or system failure — clarify with the user before retrying.');
     }
     signal?.throwIfAborted();
+    // Snapshot only once the user has actually approved, so a denied turn does not
+    // leave a checkpoint behind.
+    if (MUTATING_TOOLS.has(proposal.tool)) await checkpointOnce(`${proposal.tool} turn`);
   }
   async function change(name, args) {
     const full = await checked(text(args.path, 'path'), true);
@@ -198,7 +212,7 @@ export function createTools({ cwd, approve = async () => false, signal, timeout 
     }
   }
 
-  return async (name, input) => {
+  const run = async (name, input) => {
     signal?.throwIfAborted();
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid tool arguments');
     const args = structuredClone(input);
@@ -258,8 +272,40 @@ export function createTools({ cwd, approve = async () => false, signal, timeout 
       });
       return { ...result, note: 'Rendered with the stealth Camoufox browser.' };
     }
+    if (name === 'load_skill') {
+      const skillName = text(args.skill_name, 'skill_name');
+      // Disallow paths and other suspicious characters to prevent accidental file reads.
+      if (/[/\\:\*\?\<\>\|]/.test(skillName)) throw new Error('skill_name must be a plain identifier (no path separators or special characters)');
+      const result = await _loadSkill(skillName);
+      if (!result) return { loaded: false, name: skillName };
+      const truncated = result.content.length > TOOL_OUTPUT_CHARS;
+      return { loaded: true, name: result.name, source: result.source, size: result.size, content: truncated ? truncateMiddle(result.content) : result.content, truncated };
+    }
     throw new Error(`Unknown tool: ${name}`);
   };
+  // Turn-scoped checkpoint control, consumed by /undo rather than the model. Exposed
+  // as a property so the REPL can drive it without adding a model-visible tool.
+  run.checkpoint = {
+    /** True once this turn has approved a mutation and therefore has a snapshot. */
+    get pending() { return Boolean(turnSnapshot); },
+    /** The snapshot itself, for callers that need the tree (e.g. a change summary). */
+    get snapshot() { return turnSnapshot; },
+    async undo() {
+      if (!turnSnapshot) return { ok: false, reason: 'nothing to roll back in this turn' };
+      const snap = turnSnapshot;
+      turnSnapshot = null;
+      if (!checkpoint?.restore) return { ok: false, reason: 'checkpointing unavailable' };
+      return { ...(await checkpoint.restore(snap)), id: snap.id, files: snap.files?.length ?? 0 };
+    },
+    /** Forget the current snapshot without touching the work tree. */
+    commit() {
+      if (!turnSnapshot) return null;
+      const snap = turnSnapshot;
+      turnSnapshot = null;
+      return snap;
+    }
+  };
+  return run;
 }
 
 function command(args, cwd, signal, timeout) {

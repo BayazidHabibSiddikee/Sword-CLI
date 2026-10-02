@@ -184,7 +184,7 @@ export const KNOWN_COMMANDS = [
   'team', 'team list', 'team add', 'team remove',
   'clear', 'status', 'models', 'provider', 'providers',
   'rag', 'rag add', 'rag search',
-  'web', 'download', 'scrape',
+  'web', 'download', 'scrape', 'undo',
   // no /tasks here: it is implemented in cli/tui.js only, so flow.js must not suggest it
   'session', 'history', 'brain', 'info', 'provider',
   'model', 'character', 'char', 'c',
