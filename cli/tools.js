@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import { fetchWeb, fetchWebRendered } from './webFetch.js';
 import { loadSkill as _loadSkill } from './externalSkills.js';
 import { buildArgv, degrade as degradeSandbox, detect as detectSandbox } from './sandbox.js';
+import { isMcpToolName, isMcpMutating, dispatchMcpCall, MCP_CONNECT_TIMEOUT_MS, MCP_CALL_TIMEOUT_MS } from './mcp/dispatch.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -70,7 +71,7 @@ export function truncateMiddle(value, max = TOOL_OUTPUT_CHARS) {
 // Match a file's line endings on both sides of an edit, or CRLF files never match.
 export function normalizeEol(text, eol) { return eol === '\r\n' ? text.replace(/\r?\n/g, '\r\n') : text.replace(/\r\n/g, '\n'); }
 
-export function createTools({ cwd, approve = async () => false, signal, timeout = 30000, grants = null, ragDb = join(__dirname, 'brain', 'rag.db'), checkpoint = null }) {
+export function createTools({ cwd, approve = async () => false, signal, timeout = 30000, grants = null, ragDb = join(__dirname, 'brain', 'rag.db'), checkpoint = null, mcpServers = null }) {
   const root = resolve(cwd);
   const ragDbPath = ragDb;
   let snapshots = new Map();
@@ -150,6 +151,19 @@ export function createTools({ cwd, approve = async () => false, signal, timeout 
     // Snapshot only once the user has actually approved, so a denied turn does not
     // leave a checkpoint behind.
     if (MUTATING_TOOLS.has(proposal.tool)) await checkpointOnce(`${proposal.tool} turn`);
+  }
+  // Approval gate handed to dispatchMcpCall. Routed through the SAME grant/deny
+  // system as built-in tools so an MCP call can never bypass what /grant allows
+  // or blocks; unlike permit() it returns true (dispatchMcpCall checks the
+  // return value), and it checkpoints destructive MCP verbs the same way.
+  async function mcpPermit(proposal) {
+    signal?.throwIfAborted();
+    if (await approved(proposal) !== true) {
+      throw new Error('Action denied by user. NOT a tool or system failure — clarify with the user before retrying.');
+    }
+    signal?.throwIfAborted();
+    if (isMcpMutating(proposal.toolId, proposal.tool)) await checkpointOnce(`mcp ${proposal.tool} turn`);
+    return true;
   }
   async function change(name, args) {
     const full = await checked(text(args.path, 'path'), true);
@@ -303,6 +317,20 @@ export function createTools({ cwd, approve = async () => false, signal, timeout 
       if (!result) return { loaded: false, name: skillName };
       const truncated = result.content.length > TOOL_OUTPUT_CHARS;
       return { loaded: true, name: result.name, source: result.source, size: result.size, content: truncated ? truncateMiddle(result.content) : result.content, truncated };
+    }
+    // Namespaced remote tools (mcp__<server>__<tool>). The name routing, approval
+    // gate and live connect all live in dispatchMcpCall; here we only bridge it to
+    // this tool factory's own grant/deny + checkpoint machinery via mcpPermit.
+    if (isMcpToolName(name)) {
+      if (!mcpServers?.length) {
+        return { error: 'No MCP servers are configured. Add one to .sword/mcp.json to enable remote tools.' };
+      }
+      return dispatchMcpCall(name, args, {
+        servers: mcpServers,
+        permit: mcpPermit,
+        connectTimeoutMs: MCP_CONNECT_TIMEOUT_MS,
+        callTimeoutMs: Math.max(10000, Math.min(MCP_CALL_TIMEOUT_MS, timeout || MCP_CALL_TIMEOUT_MS))
+      });
     }
     throw new Error(`Unknown tool: ${name}`);
   };

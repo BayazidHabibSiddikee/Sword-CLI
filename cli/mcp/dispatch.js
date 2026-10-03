@@ -154,6 +154,32 @@ export function buildMcpCatalog(serversTools, { builtins = DEFAULT_BUILTINS, use
 }
 
 /**
+ * Connect to every enabled stdio server, list its tools, and return the
+ * model-facing definitions in one flat array. This is the ONLY place that
+ * pays the connect cost so the model actually sees the tools; `dispatchMcpCall`
+ * reuses the same cached clients. A server that fails to connect or list is
+ * marked dead and skipped — one flaky server must not blank the whole catalog.
+ * `importer` is injectable so tests drive the happy path without the SDK.
+ */
+export async function collectMcpDefinitions(servers, { importer = mcpSdkImporter, connectTimeoutMs = MCP_CONNECT_TIMEOUT_MS, builtins = DEFAULT_BUILTINS, used = new Set() } = {}) {
+  const definitions = [];
+  const active = (Array.isArray(servers) ? servers : []).filter(s => s && s.disabled !== true && (s.command || s.url));
+  for (const server of active) {
+    let entry;
+    try {
+      entry = await ensureMcpClient(server, { importer, timeoutMs: connectTimeoutMs });
+    } catch {
+      continue; // ensureMcpClient already recorded a dead server; keep the rest.
+    }
+    for (const tool of entry?.tools ?? []) {
+      if (!tool?.name) continue;
+      definitions.push(mcpToolDefinition(server.name, tool, { builtins, used }));
+    }
+  }
+  return definitions;
+}
+
+/**
  * Race any SDK promise against a timer. Exported so tests can drive the
  * timeout path without spawning a server. The timer is unref'd so a stray
  * pending call never holds the CLI open.

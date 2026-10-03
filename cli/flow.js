@@ -14,8 +14,8 @@ import { createSharedClient, recentContext } from './shared.js';
 import { resolveModel } from './model.js';
 import { RagEngine } from './brain/rag.js';
 import { sessions } from './skills/sessions.js';
-import { loadMcpConfig, describeConfigSummary } from './mcpConfig.js';
-import { buildMcpCatalog, dispatchMcpCall, isMcpToolName, isMcpMutating, closeMcpClients } from './mcp/dispatch.js';
+import { loadMcpConfig } from './mcpConfig.js';
+import { closeMcpClients, collectMcpDefinitions } from './mcp/dispatch.js';
 import { listInstalledSkills } from './skills/store.js';
 import { aggregateVotes, formatTeamSummary, parseTeamRounds, TEAM_ROUNDS_DEFAULT } from './team.js';
 import * as checkpoints from './checkpoint.js';
@@ -244,6 +244,29 @@ async function main() {
   await ensureSkillBlock(cwd);
   const system = { role: 'system', content: buildSystemPrompt(cwd, shared?.mode || values.mode) + (_skillBlock ? `\n\n${_skillBlock}` : '') + archiveHint(0) };
   const provider = { ...config, model: values.model || shared?.model || selectedModel };
+  // ── MCP remote tools (Phase 4) ─────────────────────────────────────────────
+  // Load config, connect to each enabled server ONCE to enumerate its tools, and
+  // merge those definitions with the built-ins so the model can actually call
+  // them. No config file ⇒ mcpServers stays empty and toolDefs === toolDefinitions
+  // (the SDK is never imported — the "zero-cost default" invariant). A config
+  // whose servers fail to connect just yields zero MCP defs; the session still
+  // works with the built-ins, so a flaky remote can never wedge a turn.
+  let mcpServers = [];
+  let mcpDefinitions = [];
+  try {
+    const mcpConfig = loadMcpConfig({ cwd, secrets: true });
+    if (mcpConfig?.servers?.length) {
+      mcpServers = mcpConfig.servers;
+      mcpDefinitions = await collectMcpDefinitions(mcpServers);
+      if (interactive) {
+        const note = mcpDefinitions.length
+          ? `${mcpServers.length} server(s), ${mcpDefinitions.length} remote tool(s) loaded`
+          : `${mcpServers.length} configured, 0 tools reachable (SDK missing or server unreachable)`;
+        console.error(`[sword] MCP: ${note}`);
+      }
+    }
+  } catch { mcpServers = []; mcpDefinitions = []; }
+  const toolDefs = mcpDefinitions.length ? [...toolDefinitions, ...mcpDefinitions] : toolDefinitions;
   // Local, append-only usage accounting (.flow/usage.jsonl, mode 0600). Best-effort:
   // a failed accounting write must never break a turn, so recordTurn is fire-and-forget.
   const usage = createUsageTracker({ cwd, provider: useG4f ? 'g4f' : 'openai-compatible' });
@@ -344,12 +367,12 @@ async function main() {
   function budgeted(rawRequest, { report = true } = {}) {
     const request = resilient(rawRequest);
     return async messages => {
-      const projected = projectRequest({ messages, tools: toolDefinitions });
+      const projected = projectRequest({ messages, tools: toolDefs });
       if (projected.tokens <= contextBudgetTokens) return request(messages);
       // Over budget: degrade in the documented order. This throws only when
       // system + tools + current input alone exceed the budget — the genuinely
       // irreducible case — and that error surfaces instead of a silent over-send.
-      const outcome = degrade({ messages, tools: toolDefinitions, budgetTokens: contextBudgetTokens });
+      const outcome = degrade({ messages, tools: toolDefs, budgetTokens: contextBudgetTokens });
       // Observable `context_budget` event on stderr (JSON line): budget pressure
       // is a first-class session signal, alongside the human-readable notice.
       const budgetEvent = contextBudgetEvent({ projectedTokens: projected.tokens, budgetTokens: contextBudgetTokens, events: outcome.events });
@@ -429,7 +452,7 @@ async function main() {
       lastTeamAggregate = null;
       if (teamMode) {
         if (!values.json && interactive) console.error(chalk.dim(`\n[Team] Round-robin discussion starting (${teamRounds} round(s))...\n`));
-        const execute = createTools({ cwd, approve, signal: active.signal, timeout: 120000, grants, ragDb, checkpoint: checkpointApi });
+        const execute = createTools({ cwd, approve, signal: active.signal, timeout: 120000, grants, ragDb, checkpoint: checkpointApi, mcpServers });
         lastExecute = execute;
         const discussion = [];
         let teamHistory = [...inputs];
@@ -450,7 +473,7 @@ async function main() {
               messages: agentInputs,
               // Team sub-calls degrade like any other request; they stay silent so
               // one over-budget turn doesn't print the notice ten times.
-              request: budgeted(useG4f ? createG4fRequest(toolDefinitions, active.signal, undefined) : createRequest(provider, toolDefinitions, active.signal, undefined), { report: false }),
+              request: budgeted(useG4f ? createG4fRequest(toolDefinitions, active.signal, undefined) : createRequest(provider, toolDefs, active.signal, undefined), { report: false }),
               execute,
               signal: active.signal,
               maxSteps: 3,
@@ -478,7 +501,7 @@ async function main() {
           ];
           const writerResult = await runTurn({
             messages: writerInputs,
-            request: budgeted(useG4f ? createG4fRequest(toolDefinitions, active.signal, values.json ? undefined : onToken) : createRequest(provider, toolDefinitions, active.signal, values.json ? undefined : onToken)),
+            request: budgeted(useG4f ? createG4fRequest(toolDefinitions, active.signal, values.json ? undefined : onToken) : createRequest(provider, toolDefs, active.signal, values.json ? undefined : onToken)),
             execute,
             signal: active.signal,
             onEvent: (name, info) => { if (info === undefined) console.error(`  ${toolLine(name)}`); else console.error(`  ${toolLine(name, info)}`); },
@@ -493,7 +516,7 @@ async function main() {
         const checkpoint = shared
           ? messages => { completed = [...history, { role: 'user', content: prompt }, ...messages.slice(inputs.length)]; }
           : values.session ? messages => { completed = messages.slice(1); } : () => {};
-        const execute = createTools({ cwd, approve, signal: active.signal, timeout: 120000, grants, ragDb, checkpoint: checkpointApi });
+        const execute = createTools({ cwd, approve, signal: active.signal, timeout: 120000, grants, ragDb, checkpoint: checkpointApi, mcpServers });
         lastExecute = execute;
         // Stream tokens to stderr only for a human at a terminal, so --json output and
         // piped stdout stay clean. The first token retires the indicator.
@@ -505,7 +528,7 @@ async function main() {
           : undefined;
         result = await runTurn({
           messages: inputs,
-          request: budgeted(useG4f ? createG4fRequest(toolDefinitions, active.signal, onToken) : createRequest(provider, toolDefinitions, active.signal, onToken)), execute, signal: active.signal,
+          request: budgeted(useG4f ? createG4fRequest(toolDefinitions, active.signal, onToken) : createRequest(provider, toolDefs, active.signal, onToken)), execute, signal: active.signal,
           onEvent: (name, info) => {
             if (info === undefined) { console.error(`  ${toolLine(name)}`); }
             else { console.error(`  ${toolLine(name, info)}`); }
@@ -611,7 +634,7 @@ async function main() {
       // last output line (sessionDiff runs git) would swallow the user's next
       // input. After the prints below this handler returns synchronously.
       // Tokens the next request would spend (history + tool schemas) vs. the ceiling.
-      const projected = projectRequest({ messages: history, tools: toolDefinitions });
+      const projected = projectRequest({ messages: history, tools: toolDefs });
       const percent = Math.min(100, Math.round((projected.tokens / contextBudgetTokens) * 100));
       // Workspace state comes from git, so it stays correct even after archiving
       // trimmed the message log down to the placeholder stub. No session-start
@@ -636,16 +659,12 @@ async function main() {
       }
       if (archivedCount > 0) console.error(`  ${chalk.dim('archived:')}  ${archivedCount} turn(s) live in the knowledge library`);
       if (block) console.error(`\n${block}`);
-      // Phase 4 ecosystem state: MCP servers (redacted), verified project
-      // skills, and the team vote consensus. All read-only and best-effort —
-      // /status must never fail because an optional subsystem did.
+      // Phase 4 ecosystem state: MCP servers (loaded + connected at startup),
+      // verified project skills, and the team vote consensus. All read-only and
+      // best-effort — /status must never fail because an optional subsystem did.
       try {
-        const mcpState = loadMcpConfig({ cwd });
-        if (mcpState === null) console.error(`  ${chalk.dim('mcp:')}       no config (.sword/mcp.json)`);
-        else {
-          const summary = describeConfigSummary(mcpState);
-          console.error(`  ${chalk.dim('mcp:')}       ${summary ? summary.join('; ') : 'configured, no usable servers'}${mcpState.errors.length ? ` (${mcpState.errors.length} warning(s))` : ''}`);
-        }
+        if (!mcpServers.length) console.error(`  ${chalk.dim('mcp:')}       no config (.sword/mcp.json)`);
+        else console.error(`  ${chalk.dim('mcp:')}       ${mcpServers.length} server(s), ${mcpDefinitions.length} remote tool(s) loaded`);
       } catch { /* optional subsystem; never break /status */ }
       try {
         const installed = listInstalledSkills({ cwd });
@@ -924,6 +943,9 @@ Usage: /provider add <name> <baseUrl> <apiKey> <model>
   } finally {
     process.removeListener('SIGINT', cancel);
     try { rl?.close(); } catch { /* already closed */ }
+    // Terminate any stdio MCP server child processes we connected to at startup.
+    // Best-effort: a failure here must not mask a real error from the turn.
+    try { await closeMcpClients(); } catch { /* already gone */ }
   }
 }
 main().catch(error => {
