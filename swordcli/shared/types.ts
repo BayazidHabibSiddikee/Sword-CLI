@@ -1,37 +1,49 @@
 // ---- Platform & Model Types ----
 
-// Active platforms — must match server/src/providers/index.ts and
-// server/src/routes/keys.ts PLATFORMS allowlist.
-// Moonshot and MiniMax direct integrations were dropped in migrateModelsV4
+// `PLATFORMS` below is the single runtime source of truth for the platform
+// union: `Platform` is DERIVED from it so the type and the runtime guard can
+// never drift apart. Keep this list in sync with the provider registrations in
+// server/src/providers/index.ts.
+// Moonshot and minimax direct integrations were dropped in migrateModelsV4
 // (see server/src/db/index.ts). HuggingFace was dropped in V4 and re-added
 // in V13 via the router.huggingface.co Inference Providers meta-router.
 // SambaNova was dropped in V23 (free tier permanently retired — 402
 // "payment method required" once the one-time $5 trial credit lapses).
-export type Platform =
-  | 'google'
-  | 'groq'
-  | 'cerebras'
-  | 'nvidia'
-  | 'mistral'
-  | 'openrouter'
-  | 'github'
-  | 'cohere'
-  | 'cloudflare'
-  | 'zhipu'
-  | 'ollama'
-  | 'kilo'
-  | 'pollinations'
-  | 'llm7'
-  | 'huggingface'
+export const PLATFORMS = [
+  'google',
+  'groq',
+  'cerebras',
+  'nvidia',
+  'mistral',
+  'openrouter',
+  'github',
+  'cohere',
+  'cloudflare',
+  'zhipu',
+  'ollama',
+  'kilo',
+  'pollinations',
+  'llm7',
+  'huggingface',
   // OpenCode Zen — OpenAI-compatible gateway. Free promotional models require a
   // free (no-card) account key from opencode.ai/auth; see migrateModelsV18.
-  | 'opencode'
+  'opencode',
   // OVHcloud AI Endpoints — OpenAI-compatible, keyless anonymous tier
   // (2 req/min per IP per model); see migrateModelsV26.
-  | 'ovh'
+  'ovh',
   // User-configured OpenAI-compatible endpoint (llama.cpp, LM Studio, vLLM,
   // Ollama, any base_url). The endpoint URL lives on the api_keys row; see #117.
-  | 'custom';
+  'custom',
+] as const;
+
+export type Platform = (typeof PLATFORMS)[number];
+
+// Runtime narrowing for values that arrive as plain `string` from SQLite or
+// JSON. Row data is untyped at that boundary, so call sites must validate
+// before passing a value to anything that expects `Platform`.
+export function isPlatform(value: unknown): value is Platform {
+  return typeof value === 'string' && (PLATFORMS as readonly string[]).includes(value);
+}
 
 export interface Model {
   id: number;

@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createTools, toolDefinitions } from '../cli/tools.js';
-import { RagEngine } from '../brain/rag.js';
+import { RagEngine } from '../cli/brain/rag.js';
 
 async function fixture(t, approve = async () => true) {
   const cwd = await mkdtemp(join(tmpdir(), 'flow-web-tools-'));

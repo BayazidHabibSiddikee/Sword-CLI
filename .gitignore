@@ -45,5 +45,9 @@ swordcli/logs/
 # Nested repo with its own remote (freellmapi) - tracked there, not here
 /GET_API/
 
+# Nested duplicate of this repo that lives at character-flow/ — see docs/hygiene_phase5.md
+# (inner .git/ was removed 2026-10-03 so tooling resolves the root repo; keep the
+#  stray third-generation copy excluded)
+character-flow/character-flow/
 # local CLI runtime state (custom providers are per-machine, never committed)
 .flow/

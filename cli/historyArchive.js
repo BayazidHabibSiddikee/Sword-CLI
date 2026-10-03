@@ -24,6 +24,7 @@
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdir, writeFile } from 'node:fs/promises';
+import assert from 'node:assert/strict';
 
 const __dirname = import.meta.dirname;
 const RAG_DB_PATH = join(__dirname, 'brain', 'rag.db');
@@ -34,25 +35,139 @@ const DOC_MAX_CHARS = 4000;
 // How many recent archive hits to mention in the injected hint.
 const ARCHIVE_HINT_TOP_K = 3;
 
+// A stub left behind in the retained window so the model can see that history went
+// missing instead of silently believing the session just started. It is a `user`
+// message on purpose: `loadSession` rejects any role outside user/assistant/tool, so
+// a custom role would make the whole session unloadable.
+export const PLACEHOLDER_MARK = '[archived-history]';
+
+/** Is this message the archive placeholder stub rather than real conversation? */
+export function isPlaceholder(m) {
+  return Boolean(m) && m.role === 'user' && typeof m.content === 'string' && m.content.includes(PLACEHOLDER_MARK);
+}
+
+export function placeholderMessage(archivedCount = 0) {
+  return {
+    role: 'user',
+    content: `${PLACEHOLDER_MARK} ${archivedCount} earlier turn(s) of this session were archived out of context to stay within the context budget. They are still searchable in the knowledge library under the \`history\` category — run \`save_to_rag\` or ask for retrieval if a decision from earlier matters.`
+  };
+}
+
+/**
+ * Split the log so the retained tail is at least `keepCount` messages and the cut
+ * never lands inside a (tool_use, tool_result) group. `messages.slice(n)` can strand
+ * a `tool` message whose `tool_use` was archived away, which providers reject; the
+ * cut is therefore moved backwards until the tail starts at a message that does not
+ * depend on anything in the head.
+ */
+export function splitAtTurnBoundary(messages, keepCount) {
+  // keepCount is a LOWER bound on the retained window, not an exact split: the cut is
+  // moved backwards as needed and a non-positive request keeps everything (archive
+  // nothing), which is what `slice(len - 0)` used to do.
+  const requested = Number.isSafeInteger(keepCount) ? keepCount : 0;
+  let split = requested > 0 ? Math.max(0, messages.length - requested) : 0;
+  // A `tool` result at the head of the tail is orphaned by this cut: back up past
+  // every consecutive tool result, and past the assistant tool_calls that issued them.
+  while (split > 0 && split < messages.length) {
+    const first = messages[split];
+    if (first?.role !== 'tool') break;
+    split--;
+    while (split > 0 && Array.isArray(messages[split]?.tool_calls) && messages[split].tool_calls.length) split--;
+  }
+  // Guard: adjacency alone is not proof. A hand-crafted or corrupted session log
+  // can interleave a result away from its call, so verify the cut directly —
+  // every tool_result in the retained tail must find its tool_use ALSO in the
+  // tail — and back up until it holds. Providers reject an orphaned result, and
+  // the archive must never produce one.
+  split = backUpPastOrphanedResults(messages, split);
+  const result = { head: messages.slice(0, split), tail: messages.slice(split) };
+  // Turn-boundary invariant: no tool_result in the tail may point to a tool_use
+  // in the head. Providers reject orphaned results, so fail loudly in dev/test
+  // rather than emitting a request that cannot work.
+  assertNoOrphanedToolPairs(messages, result.tail, split);
+  return result;
+}
+
+function assertNoOrphanedToolPairs(messages, tail, split) {
+  const headIds = new Set();
+  for (let i = 0; i < split; i++) {
+    const m = messages[i];
+    if (m?.role === 'assistant' && Array.isArray(m.tool_calls)) {
+      for (const call of m.tool_calls) {
+        if (typeof call?.id === 'string') headIds.add(call.id);
+      }
+    }
+  }
+  const tailIds = new Set();
+  for (const m of tail) {
+    if (m?.role === 'assistant' && Array.isArray(m.tool_calls)) {
+      for (const call of m.tool_calls) {
+        if (typeof call?.id === 'string') tailIds.add(call.id);
+      }
+    }
+  }
+  for (const m of tail) {
+    if (m?.role !== 'tool' || typeof m.tool_call_id !== 'string') continue;
+    // A result whose tool_use is nowhere in the log is pre-corrupted input, not
+    // a cut this function made — only assert against pairs we could have split.
+    if (!headIds.has(m.tool_call_id) && !tailIds.has(m.tool_call_id)) continue;
+    assert.ok(
+      tailIds.has(m.tool_call_id),
+      `splitAtTurnBoundary orphaned tool_result ${m.tool_call_id} at cut ${split}`
+    );
+  }
+}
+
+/**
+ * Largest cut ≤ `split` at which no tail tool_result points back to a tool_use
+ * in the head. Each pass moves the cut strictly backwards (to before the
+ * offending call), so this terminates even on adversarial input.
+ */
+function backUpPastOrphanedResults(messages, split) {
+  const useIndex = new Map();
+  for (const [index, m] of messages.entries()) {
+    if (m?.role !== 'assistant' || !Array.isArray(m.tool_calls)) continue;
+    for (const call of m.tool_calls) {
+      if (typeof call?.id === 'string' && !useIndex.has(call.id)) useIndex.set(call.id, index);
+    }
+  }
+  let cut = split;
+  while (cut > 0) {
+    let move = -1;
+    for (let i = cut; i < messages.length && move < 0; i++) {
+      const m = messages[i];
+      if (m?.role !== 'tool' || typeof m.tool_call_id !== 'string') continue;
+      const usedAt = useIndex.get(m.tool_call_id);
+      if (usedAt !== undefined && usedAt < cut) move = usedAt;
+    }
+    if (move < 0) break;
+    cut = move;
+  }
+  return cut;
+}
+
 /** Compress a sequence of raw messages into one or more RAG-ready docs. */
 export function compressTurns(messages) {
   // Walk messages in pairs: user text followed by the assistant turn (text + tool calls).
+  // Placeholder stubs are dropped first: re-archiving them would write a document
+  // about the archive into the archive, and each pass would grow the stub's count.
+  const source = (messages ?? []).filter(m => !isPlaceholder(m));
   const docs = [];
   let i = 0;
-  while (i < messages.length) {
-    const user = messages[i];
+  while (i < source.length) {
+    const user = source[i];
     if (!user || user.role !== 'user' || typeof user.content !== 'string') {
       i++; continue;
     }
     // Collect any assistant + tool-result blocks that belong to this user turn.
     const blocks = [{ role: 'user', content: user.content }];
     i++;
-    while (i < messages.length && messages[i].role === 'assistant') {
-      blocks.push(messages[i]);
+    while (i < source.length && source[i].role === 'assistant') {
+      blocks.push(source[i]);
       i++;
     }
-    while (i < messages.length && messages[i].role === 'tool') {
-      blocks.push(messages[i]);
+    while (i < source.length && source[i].role === 'tool') {
+      blocks.push(source[i]);
       i++;
     }
     const content = buildTurnSummary(blocks);
@@ -95,17 +210,24 @@ function safeJson(v) {
   try { return typeof v === 'string' ? v : JSON.stringify(v ?? null); } catch { return String(v ?? ''); }
 }
 
-/** Persist compressed docs into the local RAG database, then discard them. */
-export async function archiveMessages(messages, keepCount) {
-  if (messages.length <= HISTORY_THRESHOLD) return { archived: 0, keepCount: messages.length };
-  // Split: keep the tail, archive the head.
-  const archive = messages.slice(0, messages.length - keepCount);
-  const keep = messages.slice(messages.length - keepCount);
-  const docs = compressTurns(archive);
-  if (!docs.length) return { archived: 0, keepCount: messages.length };
+/**
+ * Persist compressed docs into the local RAG database, then discard them.
+ *
+ * The retained window is cut at a turn boundary and carries exactly ONE placeholder
+ * stub at its head, so the model can tell that context was archived rather than
+ * assume the session just began — and so a second archive pass cannot stack stubs.
+ * Returns `{ archived, keepCount, kept }` where `keepCount === kept.length`; callers
+ * must use `kept` (not a re-slice of the input) so the stub survives.
+ */
+export async function archiveMessages(messages, keepCount, archivedBefore = 0) {
+  if (messages.length <= HISTORY_THRESHOLD) return { archived: 0, keepCount: messages.length, kept: messages.slice() };
+  // Split: keep the tail, archive the head — never inside a tool_use/tool_result pair.
+  const { head, tail } = splitAtTurnBoundary(messages, keepCount);
+  const docs = compressTurns(head);
+  if (!docs.length) return { archived: 0, keepCount: messages.length, kept: messages.slice() };
   await ensureRagDb();
-  const { RagEngine } = await import(join(__dirname, '../brain/rag.js')).catch(() => null);
-  if (!RagEngine) return { archived: 0, keepCount: messages.length, reason: 'RagEngine unavailable' };
+  const { RagEngine } = await import(join(__dirname, './brain/rag.js')).catch(() => null);
+  if (!RagEngine) return { archived: 0, keepCount: messages.length, kept: messages.slice(), reason: 'RagEngine unavailable' };
   const engine = new RagEngine(RAG_DB_PATH);
   let written = 0;
   try {
@@ -116,7 +238,10 @@ export async function archiveMessages(messages, keepCount) {
   } finally {
     try { engine.db?.close(); } catch { /* best effort */ }
   }
-  return { archived: written, keepCount: keep.length, kept: keep };
+  if (!written) return { archived: 0, keepCount: messages.length, kept: messages.slice() };
+  const stub = placeholderMessage(archivedBefore + written);
+  const kept = tail.some(isPlaceholder) ? tail : [stub, ...tail];
+  return { archived: written, keepCount: kept.length, kept };
 }
 
 async function ensureRagDb() {

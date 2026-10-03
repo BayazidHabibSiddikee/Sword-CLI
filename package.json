@@ -38,8 +38,8 @@
     "stack:up": "./sword.mjs up",
     "stack:down": "./sword.mjs down",
     "stack:status": "./sword.mjs status",
-    "seed": "node brain/seed_izuku.js",
-    "seed:all": "node brain/seed_izuku.js && node brain/seed_mahina.js && node brain/seed_muhan.js && node brain/seed_plastos.js && node brain/seed_monk.js && node brain/seed_prince.js && node brain/seed_turing.js && node brain/seed_sable.js && node brain/seed_ada.js && node brain/seed_kael.js",
+    "seed": "node cli/brain/seed_izuku.js",
+    "seed:all": "node cli/brain/seed_izuku.js && node cli/brain/seed_mahina.js && node cli/brain/seed_muhan.js && node cli/brain/seed_plastos.js && node cli/brain/seed_monk.js && node cli/brain/seed_prince.js && node cli/brain/seed_turing.js && node cli/brain/seed_sable.js && node cli/brain/seed_ada.js && node cli/brain/seed_kael.js",
     "ci": "npm run test:coverage && echo '=== /home/sword refs ===' && grep -rn '/home/sword' scraper/ || true && echo '=== npm pack dry-run ===' && npm pack --dry-run | grep -vE '^$' && echo 'CI OK'"
   },
   "dependencies": {
@@ -50,6 +50,7 @@
     "better-sqlite3": "^12.11.1",
     "chalk": "^5.3.0",
     "g4f": "^1.4.6",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "mammoth": "^1.12.3",
     "ora": "^8.0.1",
     "pdf-parse": "^2.4.5",

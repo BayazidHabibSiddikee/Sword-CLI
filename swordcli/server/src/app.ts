@@ -17,6 +17,7 @@ import { agentRouter } from './routes/agent.js';
 import { swordRouter } from './routes/sword.js';
 import { ragRouter } from './routes/rag.js';
 import { channelsRouter } from './routes/channels.js';
+import { usageRouter } from './routes/usage.js';
 import { createProxyRateLimiter } from './middleware/rateLimit.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
@@ -60,6 +61,7 @@ export function createApp() {
   app.use('/api/sword', swordRouter);
   app.use('/api/rag', ragRouter);
   app.use('/api/channels', channelsRouter);
+  app.use('/api/usage', usageRouter);
 
   // Character brain — system prompt + quote/poetry/idea endpoints
   const characterRouter = express.Router();

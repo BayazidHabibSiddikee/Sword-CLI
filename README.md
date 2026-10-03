@@ -205,15 +205,58 @@ character-flow/
 │   ├── client/            # Vite React web UI
 │   └── server/data/       # SQLite (keys, models, sessions)
 ├── sword-server/          # Minimal plain-node API (fallback)
-├── brain/                 # Character knowledge bases (SQLite)
-├── skills/                # Shared skill implementations
+├── brain/                 # Legacy TUI shims (tui_*.js) — reference live cli/brain + cli/skills at runtime
 ├── data/                  # Sessions, RAG, tasks databases
-├── docs/                  # Architecture docs
+├── docs/                  # Architecture docs, incl. limitations_plan.md + hygiene_phase5.md
 ├── scripts/               # Utility scripts
 ├── vendor/agent-scripts/  # Vendored steipete/agent-scripts skills (openclaw-relay, telecrawl, …)
+├── character-flow/        # Nested legacy duplicate of this repo — excluded, do not edit
 ├── sword.mjs              # Unified launcher
 └── package.json
 ```
+
+## Known Limitations
+
+SwordCLI is under active remediation. The full plan, with per-item evidence, is in
+**[docs/limitations_plan.md](docs/limitations_plan.md)**; the repo-hygiene analysis is in
+**[docs/hygiene_phase5.md](docs/hygiene_phase5.md)**. Provider/key setup is documented in
+**[docs/channels.md](docs/channels.md)**.
+
+### Landed
+
+- **Phase 0 — correctness.** Loop-guard, atomic writes and web-mount fixes.
+- **Phase 1 — context budget.** Context budgeting, honest degradation, session diff, and archive-on-save.
+- **Phase 2 — execution engine.** Parallel tool execution, batched edits, optional sandbox.
+- **Phase 3 — provider resilience.** Retry/backoff with a circuit breaker, capability tracking, usage accounting.
+- **Phase 4 — ecosystem.** Skills integration and team state.
+- **Phase 5 — repo hygiene (landed).** Single RAG source (`cli/brain/rag.js`; the
+  `brain/rag.js` duplicate is removed) and single skill surface (`cli/skills/`;
+  the root `skills/` duplicate is removed). `cli/flow.js` now imports
+  `./skills/sessions.js`, and `cli/tools.js` + `cli/historyArchive.js` resolve the
+  RAG engine at `./brain/rag.js`. The `providers.ts` type narrowing is fixed and
+  the server typechecks clean; `character-flow/.git` (nested repo) is removed and
+  `character-flow/character-flow/` stays excluded via `.gitignore`.
+
+### Pending / known gaps
+
+- **RAG engines are intentionally separate.** `cli/brain/rag.js` (CLI, SQLite)
+  and `swordcli/server/src/services/rag.ts` (server, filesystem JSON) share no
+  schema and no code — different runtimes, different callers (CLI tools vs HTTP
+  `ragRouter`). See [docs/hygiene_phase5.md §5.2](docs/hygiene_phase5.md).
+- **`cli/skills/agents/` does not exist**, but `cli/tui.js` and four `cli/brain/*.js` modules import
+  from it. Switching to the Sable / Turing / Ada / Kael personas in the TUI will fail to load until
+  this is restored or the persona entries are removed.
+- **`character-flow/` (713 tracked files) is a nested copy of this repo** sharing the same origin.
+  Its inner `.git/` is removed so tooling resolves the root repo; the directory itself
+  is still tracked and `character-flow/character-flow/` stays `.gitignore`d.
+  `character-flow/freellmapi` holds 341 files with no root counterpart and must be
+  relocated before the directory can be untracked.
+- **`brain/` at the repo root holds only `tui_*.js` shims** — they resolve against
+  `cli/brain/` + `cli/skills/` at runtime.
+- **Skill discovery is budget-limited**: only a small alphabetical prefix of discovered skills fits the
+  prompt budget, so skill availability is not uniform across sessions.
+- **Sandboxing is opt-in and best-effort.** It relies on `bwrap`/`firejail` where present; there is no
+  network isolation guarantee on platforms lacking both.
 
 ## Development
 

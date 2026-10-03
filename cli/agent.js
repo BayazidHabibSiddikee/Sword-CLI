@@ -1,17 +1,12 @@
 import { readFile, writeFile, mkdir, rename, lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { elapsed, summarizeResult } from './ui.js';
+import { isMcpToolName, isMcpMutating } from './mcp/dispatch.js';
+import { prepareCalls, partitionCalls, runReadonly, runMutation, foldResults } from './executor.js';
 
-const TOOL_OUTPUT_CHARS = 48000;
-
-// Elide the middle, keep head and tail — the end of a build or test log is the part
-// that says what went wrong. Kept local rather than imported from tools.js to avoid
-// a module cycle.
-function truncateMiddle(body, max) {
-  const notice = chars => `\n[truncated ${chars} chars — head and tail preserved]\n`;
-  const half = Math.max(1, Math.floor((max - notice(body.length).length) / 2));
-  return `${body.slice(0, half)}${notice(body.length - half * 2)}${body.slice(-half)}`;
-}
+// Truncation + loop helpers moved to executor.js (single source). agent.js keeps
+// only the request/turn orchestration; the fold there applies the same head+tail
+// bound the executor uses.
 
 export function providerConfig(env = process.env) {
   const base = new URL(env.OPENAI_BASE_URL || env.PROXY_HOST || 'http://localhost:3001/v1');
@@ -119,23 +114,49 @@ export async function readEventStream(response, onToken) {
 //   - soft  / LOOP_SOFT   (consecutive identical failures >= 2): guidance, keep going
 //   - hard  / LOOP_HARD   (consecutive identical failures >= 3): stop the turn
 //   - repeat/ LOOP_REPEAT (consecutive identical successes >= 5): a note, never stops
-const LOOP_SOFT = 2, LOOP_HARD = 3, LOOP_REPEAT = 5, MISTAKE_LIMIT = 3;
+// Loop thresholds live in executor.js now (single source of truth for the stop
+// ladder); runTurn below delegates accounting to prepareCalls, so no local
+// LOOP_*/callKey helpers remain. MISTAKE_LIMIT stays here: it counts consecutive
+// failed STEPS (not identical calls) and is unrelated to the loop ladder.
+const MISTAKE_LIMIT = 3;
 
-function loopStopText(name, seen) {
-  return `You have called \`${name}\` with identical arguments ${seen} times in a row and it keeps failing. `
-    + 'Stop retrying. Re-read the relevant file, reconsider the approach, or tell the user what is blocking you.';
-}
-
-function callKey(name, args) {
-  let stable;
-  try { stable = JSON.stringify(args ?? {}, Object.keys(args ?? {}).sort()); } catch { stable = String(args); }
-  return `${name}:${stable}`;
-}
-
-export async function runTurn({ messages, request, execute, maxSteps = 20, onEvent = () => {}, onCheckpoint = () => {}, signal }) {
+export async function runTurn({ messages, request, execute, maxSteps = 20, onEvent = () => {}, onCheckpoint = () => {}, signal, maxParallel }) {
   let history = [...messages];
   const repeats = new Map();
   let mistakes = 0;
+  // Read-only detection mirrors the safety gate: anything that can mutate the
+  // tree or the knowledge base breaks the parallel run; only write/edit batches.
+  const MUTATING = new Set(['write_file', 'edit_file', 'run_command', 'save_to_rag']);
+  const BATCHABLE = new Set(['write_file', 'edit_file']);
+  // Phase 4: MCP tools are arbitrary remote code — every call needs its own
+  // explicit grant (permit gate in dispatch.js), so none are batchable. Reads
+  // run with the readonly segment; destructive verbs run strictly sequential.
+  const isMutatingCall = call => {
+    const name = call?.function?.name ?? '';
+    if (MUTATING.has(name)) return true;
+    if (isMcpToolName(name)) return isMcpMutating(name);
+    return false;
+  };
+  // A caller-supplied batch (tools.js execute.batch) runs consecutive same-name
+  // edit segments with ONE approval + ONE checkpoint; without it mutations run
+  // one by one. Function check, not truthiness.
+  const batchFn = typeof execute?.batch === 'function' ? execute.batch : undefined;
+  const mcpDispatch = typeof execute?.mcp === 'function' ? execute.mcp : null;
+  const runOne = async entry => {
+    if (entry.argsError) return { error: entry.argsError };
+    // Phase 4: mcp__ tools route to the MCP dispatcher (permit gate + timeout
+    // inside). Without a bound dispatcher this is a model-visible error, never
+    // a connection attempt — no config means the SDK is never imported.
+    if (isMcpToolName(entry.name)) {
+      if (!mcpDispatch) return { error: `Unknown tool: ${entry.name} (no MCP servers configured)` };
+      try {
+        return await mcpDispatch(entry.name, entry.args);
+      } catch (error) {
+        return { error: error?.message ?? String(error) };
+      }
+    }
+    return execute(entry.name, entry.args);
+  };
   for (let step = 0; step < maxSteps; step++) {
     signal?.throwIfAborted();
     const data = await request(history);
@@ -149,87 +170,82 @@ export async function runTurn({ messages, request, execute, maxSteps = 20, onEve
       if (typeof msg.content !== 'string' || !msg.content.trim()) throw new Error('Empty provider response');
       return { text: msg.content, messages: history };
     }
-    // Ids already answered this turn, so a stop can never emit a second tool
-    // result for one id — duplicate tool_call_ids are rejected by providers.
-    const answered = new Set(history.filter(m => m.role === 'tool').map(m => m.tool_call_id));
-    let stepFailed = false;
     for (const call of calls) {
-      signal?.throwIfAborted();
-      if (!call.id || !call.function?.name) throw new Error('Invalid tool call');
-      const name = call.function.name;
-      onEvent(name);
-      const startedAt = performance.now();
-      let args = null;
-      let failure = null;
-      let result = null;
-      try {
-        args = JSON.parse(call.function.arguments || '{}');
-      } catch (error) {
-        if (signal?.aborted) failure = error;
-        else {
-          result = { error: `Malformed JSON arguments: ${error.message}` };
-          onEvent(name, { ok: false, ms: elapsed(startedAt), summary: error.message });
+      if (!call?.id || !call.function?.name) throw new Error('Invalid tool call');
+    }
+    const segments = partitionCalls(calls, {
+      isMutating: isMutatingCall,
+      batchable: call => BATCHABLE.has(call?.function?.name),
+    });
+    const completed = [];
+    let failure = null;
+    for (const segment of segments) {
+      if (signal?.aborted) { failure ??= signal.reason ?? new Error('aborted'); break; }
+      if (segment.kind === 'readonly') {
+        const outcomes = await runReadonly(segment.calls,
+          { run: runOne, signal, onEvent, ...(maxParallel === undefined ? {} : { maxParallel }) });
+        completed.push(...outcomes);
+        failure ??= outcomes.failure ?? null;
+      } else if (segment.kind === 'batch' && segment.calls.length > 1 && batchFn) {
+        const startedAt = Date.now();
+        for (const entry of segment.calls) {
+          try { onEvent?.(entry.name); } catch { /* UI must not break execution */ }
         }
-      }
-      if (!failure && result === null) {
         try {
-          result = await execute(name, args);
+          const produced = await batchFn(segment.calls[0].name, segment.calls);
+          const list = Array.isArray(produced) ? produced : [];
+          segment.calls.forEach((entry, i) => {
+            const result = list[i] ?? { error: 'batch produced no result' };
+            completed.push({ id: entry.id, index: entry.index, name: entry.name,
+              args: entry.args, ok: result?.error === undefined, result: result ?? null,
+              ms: Math.max(0, Date.now() - startedAt) });
+            try { onEvent?.(entry.name, { ok: result?.error === undefined,
+              ms: elapsed(startedAt), summary: summarizeResult(result) || (entry.args?.path ?? '') }); } catch { /* ignore */ }
+          });
         } catch (error) {
-          if (signal?.aborted) failure = error;
-          else {
-            result = { error: error.message };
-            onEvent(name, { ok: false, ms: elapsed(startedAt), summary: error.message });
+          if (signal?.aborted) { failure ??= error; break; }
+          for (const entry of segment.calls) {
+            const result = { error: error?.message ?? String(error) };
+            completed.push({ id: entry.id, index: entry.index, name: entry.name,
+              args: entry.args, ok: false, result, ms: Math.max(0, Date.now() - startedAt) });
+            try { onEvent?.(entry.name, { ok: false, ms: elapsed(startedAt), summary: result.error }); } catch { /* ignore */ }
           }
         }
+      } else {
+        const outcomes = await runMutation(segment.calls, {
+          run: async entry => runOne(entry),
+          signal, onEvent,
+          batch: batchFn ? async entries => {
+            const results = await batchFn(entries[0]?.name ?? segment.calls[0]?.name, entries);
+            return entries.map((entry, i) => ({ id: entry.id,
+              ok: results?.[i]?.error === undefined, result: results?.[i] ?? null, ms: 0 }));
+          } : undefined,
+        });
+        completed.push(...outcomes);
+        failure ??= outcomes.failure ?? null;
       }
-      if (failure) {
-        checkpointRepair(history, calls, onCheckpoint);
-        throw failure;
-      }
-      signal?.throwIfAborted();
-      const ok = result?.error === undefined;
-      if (!ok) stepFailed = true;
-
-      // Loop accounting runs AFTER the outcome is known, and a change of outcome
-      // for the same (tool, args) pair resets the streak. So only a run of
-      // identical *failures* climbs the stop ladder: a repeated good call never
-      // stops the turn, and a success mid-run clears the failure streak.
-      const key = callKey(name, args);
-      const failingNow = !ok;
-      const prev = repeats.get(key);
-      const seen = prev && prev.failing === failingNow ? prev.count + 1 : 1;
-      repeats.set(key, { count: seen, failing: failingNow });
-      const base = result && typeof result === 'object' ? result : { result };
-      let stop = false;
-      if (failingNow && seen >= LOOP_HARD) {
-        stop = true;
-        result = { error: loopStopText(name, seen) };
-      } else if (failingNow && seen >= LOOP_SOFT) {
-        result = { ...base, error: `${base.error ?? 'failed'} (repetition ${seen}/${LOOP_HARD})` };
-      } else if (!failingNow && seen >= LOOP_REPEAT) {
-        result = { ...base, note: `\`${name}\` was called ${seen} times with identical arguments and succeeded each time. Continue only if that repetition is intentional.` };
-      }
-
-      const summary = summarizeResult(result) || (args && typeof args.path === 'string' ? args.path : '');
-      onEvent(name, { ok: result?.error === undefined, ms: elapsed(startedAt), summary });
-      const serialized = JSON.stringify(result ?? null);
-      const content = serialized.length > TOOL_OUTPUT_CHARS ? truncateMiddle(serialized, TOOL_OUTPUT_CHARS) : serialized;
-      history = [...history, { role: 'tool', tool_call_id: call.id, content }];
-      answered.add(call.id);
-      onCheckpoint(history);
-
-      if (stop) {
-        // Answer with the model's own last words so the turn ends cleanly instead
-        // of throwing away every step it already took, and close out ONLY the ids
-        // that still have no result so the tool_call/tool_result pairing stays
-        // valid — a second result for an already-answered id is a protocol error.
-        const spoken = typeof msg.content === 'string' && msg.content.trim() ? msg.content.trim() : null;
-        const text = `${spoken ? `${spoken}\n\n` : ''}${loopStopText(name, seen)}`;
-        const pending = calls.filter(c => c.id && !answered.has(c.id));
-        history = [...history, ...pending.map(c => ({ role: 'tool', tool_call_id: c.id, content: JSON.stringify({ error: 'loop_detected' }) }))];
+      if (failure) break;
+    }
+    if (failure) {
+      checkpointRepair(history, calls, onCheckpoint);
+      throw failure;
+    }
+    signal?.throwIfAborted();
+    const { entries, hardStop, text } = prepareCalls(calls, repeats, {}, completed);
+    history = foldResults(history, entries.map(entry => entry.outcome));
+    onCheckpoint(history);
+    const stepFailed = completed.some(outcome => outcome?.ok === false)
+      || entries.some(entry => entry.outcome?.ok === false);
+    if (hardStop) {
+      const spoken = typeof msg.content === 'string' && msg.content.trim() ? msg.content.trim() : null;
+      const pendingIds = new Set(history.filter(m => m.role === 'tool').map(m => m.tool_call_id));
+      const missing = calls.filter(c => c.id && !pendingIds.has(c.id));
+      if (missing.length) {
+        history = [...history, ...missing.map(c => ({ role: 'tool', tool_call_id: c.id,
+          content: JSON.stringify({ error: 'loop_detected' }) }))];
         onCheckpoint(history);
-        return { text, messages: history };
       }
+      return { text: `${spoken ? `${spoken}\n\n` : ''}${text}`, messages: history };
     }
     if (stepFailed) {
       mistakes++;

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { getDb } from '../db/index.js';
 import { hasProvider } from '../providers/index.js';
+import { isPlatform } from '@swordcli/shared/types.js';
 
 export const providersRouter = Router();
 
@@ -17,7 +18,11 @@ providersRouter.get('/', (_req: Request, res: Response) => {
     id: r.platform,
     name: r.platform,
     modelCount: r.model_count,
-    enabled: hasProvider(r.platform),
+    // `models.platform` is a plain TEXT column, so a row can hold a platform
+    // this build no longer knows about (e.g. one dropped by a later migration).
+    // Narrow before probing the provider registry; unknown platforms report
+    // `enabled: false` instead of crashing the route.
+    enabled: isPlatform(r.platform) ? hasProvider(r.platform) : false,
   }));
 
   res.json(result);

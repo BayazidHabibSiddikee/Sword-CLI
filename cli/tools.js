@@ -1,9 +1,11 @@
 import { lstat, readFile, readdir, mkdir, writeFile, rename, rm, realpath } from 'node:fs/promises';
-import { resolve, relative, sep, join, dirname } from 'node:path';
+import { statSync } from 'node:fs';
+import { resolve, relative, sep, join, dirname, isAbsolute, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { fetchWeb, fetchWebRendered } from './webFetch.js';
 import { loadSkill as _loadSkill } from './externalSkills.js';
+import { buildArgv, degrade as degradeSandbox, detect as detectSandbox } from './sandbox.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -20,13 +22,18 @@ const string = { type: 'string' };
 const definition = (name, description, properties, required = []) => ({ type: 'function', function: {
   name, description, parameters: { type: 'object', properties, required, additionalProperties: false }
 } });
+const SANDBOX_MODES = new Set(['auto', 'bwrap', 'firejail', 'sandbox-exec', 'none']);
+export function sandboxMode({ env = process.env } = {}) {
+  const mode = String(env?.SWORDCLI_SANDBOX ?? 'auto').trim().toLowerCase();
+  return SANDBOX_MODES.has(mode) ? mode : 'auto';
+}
 export const toolDefinitions = [
   definition('list_files', 'List project files; skips hidden/build/dependency directories.', { path: string }),
   definition('read_file', 'Read a text file before editing. Omit offset/limit to read the whole file (bounded to 64 KB); use offset/limit to page through anything larger.', { path: string, offset: { type: 'integer' }, limit: { type: 'integer' } }, ['path']),
   definition('search_files', 'Search literal text across project files.', { query: string }, ['query']),
   definition('write_file', 'Create or overwrite text with approval; read existing files first.', { path: string, content: string }, ['path', 'content']),
   definition('edit_file', 'Replace exactly one occurrence in a previously read file with approval.', { path: string, old_text: string, new_text: string }, ['path', 'old_text', 'new_text']),
-  definition('run_command', 'Run executable and arguments with approval. No shell parsing; NOT sandboxed.', { command: string, args: { type: 'array', items: string } }, ['command', 'args']),
+  definition('run_command', 'Run executable and arguments with approval. No shell parsing; sandbox mode is declared on every result (see `sandbox`).', { command: string, args: { type: 'array', items: string } }, ['command', 'args']),
   definition('save_to_rag', 'Save a durable note to this project\'s memory so later sessions can retrieve it. Requires approval.', { category: string, title: string, content: string }, ['category', 'title', 'content']),
   definition('read_pdf', 'Extract bounded text from a PDF inside the project before summarizing it.', { path: string, max_pages: { type: 'integer' } }, ['path']),
   definition('fetch_web', 'Fetch a public web page over HTTP and return readable Markdown. Fast; cannot execute JavaScript.', { url: string, max_chars: { type: 'integer' } }, ['url']),
@@ -202,7 +209,7 @@ export function createTools({ cwd, approve = async () => false, signal, timeout 
     // rest of the session — a silent feature that never worked.
     await mkdir(dirname(ragDbPath), { recursive: true });
     await permit({ tool: 'save_to_rag', path: ragDbPath, category, title });
-    const { RagEngine } = await import('../brain/rag.js');
+    const { RagEngine } = await import('./brain/rag.js');
     const engine = new RagEngine(ragDbPath);
     try {
       const id = engine.insertKnowledge(category.slice(0, 120), title.slice(0, 300), content, 'swordcli');
@@ -271,7 +278,7 @@ export function createTools({ cwd, approve = async () => false, signal, timeout 
       if (!Array.isArray(args.args) || args.args.length > 100) throw new Error('Invalid command args');
       args.args.forEach(arg => text(arg, 'argument', true));
       await permit({ tool: name, cwd: root, command: args.command, args: args.args });
-      return command(args, root, signal, timeout);
+      return runSandboxed(args, root, signal, timeout);
     }
     if (name === 'save_to_rag') return saveToRag(args);
     if (name === 'read_pdf') return readPdf(args);
@@ -299,6 +306,26 @@ export function createTools({ cwd, approve = async () => false, signal, timeout 
     }
     throw new Error(`Unknown tool: ${name}`);
   };
+  // Batched sibling of `change()`: consecutive write_file/edit_file calls from one
+  // assistant message share ONE approval and ONE checkpoint. The executor calls this
+  // only with same-name entries (partitionCalls guarantees it); anything else is
+  // refused rather than half-applied. Deny (or any permit throw) fails every id in
+  // the segment — the executor folds one result per id, never a single shared error.
+  run.batch = async (name, items = []) => {
+    if (name !== 'write_file' && name !== 'edit_file') throw new Error(`Unsupported batch operation: ${name}`);
+    if (!Array.isArray(items) || !items.length) throw new Error('Empty batch');
+    const { changeMany } = await import('./batch.js');
+    const list = items.map(item => ({ ...item.args, id: item.id }));
+    const result = await changeMany(name, list, { checked, read, permit, snapshots });
+    if (result?.snapshots instanceof Map) snapshots = result.snapshots;
+    if (!result?.ok) throw new Error(result?.error ?? 'Batch failed');
+    const byId = new Map((result.written ?? []).map(w => [w.id ?? null, w]));
+    // Order follows the request list so the executor's fold stays in call order.
+    return list.map(item => {
+      const written = byId.get(item.id) ?? byId.get(null);
+      return { path: written?.path ?? item.path, bytes: written?.bytes ?? 0, sandbox: 'none', batch: true };
+    });
+  };
   // Turn-scoped checkpoint control, consumed by /undo rather than the model. Exposed
   // as a property so the REPL can drive it without adding a model-visible tool.
   run.checkpoint = {
@@ -325,8 +352,89 @@ export function createTools({ cwd, approve = async () => false, signal, timeout 
 }
 
 function command(args, cwd, signal, timeout) {
+  return spawnSandboxed(args, cwd, signal, timeout);
+}
+
+// Every run_command result declares how it ran: the sandbox kind travels WITH the
+// result (so logs, transcripts and tests can see it) instead of living only in a
+// prompt string. Detection is cached per process; a binary that vanishes at exec
+// time downgrades one rung with `downgrade` recorded — never a silent re-run.
+//
+// Spawn failures keep the RAW error contract: ENOENT for a missing command still
+// rejects (tests + callers rely on it) rather than arriving as a result object.
+// Only the sandboxed WRAPPER gets the downgrade retry — when the wrapper itself
+// is missing but the user's command may still run beneath it.
+async function runSandboxed(args, cwd, signal, timeout) {
+  let capability = null;
+  try {
+    capability = await detectSandbox();
+  } catch {
+    capability = { kind: 'none', reason: 'sandbox probe failed' };
+  }
+  const kind = capability?.kind ?? 'none';
+  // `none` spawns the command directly: no wrapper, no retry, raw errors.
+  if (kind === 'none') {
+    const result = await commandRaw({ command: args.command, args: args.args }, cwd, signal, timeout);
+    return { ...result, sandbox: 'none' };
+  }
+  // With a wrapper, IT is what spawn()s, so a missing INNER command would surface as
+  // the wrapper exiting non-zero instead of the raw ENOENT reject that callers and
+  // tests contract on. Probe resolvability first so the run_command error contract is
+  // identical whether or not a sandbox is available.
+  if (!resolveCommandPath(args.command, cwd)) {
+    const error = new Error(`spawn ${args.command} ENOENT`);
+    error.code = 'ENOENT';
+    error.errno = -2;
+    error.syscall = 'spawn';
+    error.path = args.command;
+    throw error;
+  }
+  const wrapped = buildArgv({ kind, cwd, command: args.command, args: args.args });
+  try {
+    const result = await commandRaw(wrapped, cwd, signal, timeout);
+    return { ...result, sandbox: kind };
+  } catch (error) {
+    // A sandboxed wrapper that cannot spawn (binary vanished, not permitted by
+    // policy) steps down one rung and retries the user's command itself, with the
+    // downgrade recorded. Any other error — or the fallback failing too — is a
+    // genuine failure and keeps the RAW reject contract (ENOENT included).
+    if (wrapped.command !== args.command) {
+      try {
+        const next = degradeSandbox(capability, `spawn ${wrapped.command} ${error?.code ?? error?.message ?? String(error)}`);
+        const retry = buildArgv({ kind: next.kind, cwd, command: args.command, args: args.args });
+        const result = await commandRaw(retry, cwd, signal, timeout);
+        const downgrade = next?.downgrade ?? next;
+        return { ...result, sandbox: next.kind, downgrade };
+      } catch {
+        // Fall through to the original error below.
+      }
+    }
+    throw error;
+  }
+}
+
+/**
+ * Resolve `command` the way spawn() would, WITHOUT spawning it: an absolute path is
+ * used as-is, a relative path is resolved against the tool cwd, and a bare name is
+ * searched on PATH. Returns the first regular file found, or null.
+ */
+function resolveCommandPath(command, cwd, env = process.env) {
+  const hasSeparator = command.includes('/') || (sep === '\\' && command.includes('\\'));
+  const candidates = isAbsolute(command)
+    ? [command]
+    : hasSeparator
+      ? [resolve(cwd, command)]
+      : String(env.PATH ?? '').split(delimiter).filter(Boolean).map(dir => join(dir, command));
+  for (const candidate of candidates) {
+    try { if (statSync(candidate).isFile()) return candidate; }
+    catch { /* not this candidate; keep looking */ }
+  }
+  return null;
+}
+
+function commandRaw(wrapped, cwd, signal, timeout) {
   return new Promise((resolveResult, reject) => {
-    const child = spawn(args.command, args.args, { cwd, shell: false, detached: process.platform !== 'win32',
+    const child = spawn(wrapped.command, wrapped.args, { cwd, shell: false, detached: process.platform !== 'win32',
       stdio: ['ignore', 'pipe', 'pipe'], env: { PATH: process.env.PATH, LANG: 'C.UTF-8', TERM: 'dumb' } });
     let stdout = '', stderr = '', timedOut = false, truncated = false;
     const stop = () => {

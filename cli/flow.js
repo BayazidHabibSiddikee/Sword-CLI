@@ -12,11 +12,20 @@ import { discoverSkills, buildCompactIndex } from './externalSkills.js';
 import { configureSwordBackend, readLocalUnifiedKey } from './backend.js';
 import { createSharedClient, recentContext } from './shared.js';
 import { resolveModel } from './model.js';
-import { RagEngine } from '../brain/rag.js';
-import { sessions } from '../skills/sessions.js';
+import { RagEngine } from './brain/rag.js';
+import { sessions } from './skills/sessions.js';
+import { loadMcpConfig, describeConfigSummary } from './mcpConfig.js';
+import { buildMcpCatalog, dispatchMcpCall, isMcpToolName, isMcpMutating, closeMcpClients } from './mcp/dispatch.js';
+import { listInstalledSkills } from './skills/store.js';
+import { aggregateVotes, formatTeamSummary, parseTeamRounds, TEAM_ROUNDS_DEFAULT } from './team.js';
 import * as checkpoints from './checkpoint.js';
 import { listProviders } from './providers.js';
 import { archiveMessages, archiveHint, HISTORY_THRESHOLD } from './historyArchive.js';
+import { projectRequest, degrade, contextBudgetEvent, DEFAULT_BUDGET_TOKENS } from './budget.js';
+import { sessionDiff, formatSessionDiff } from './sessionDiff.js';
+import { withRetry, classifyError, providerHealth, circuitOpenError } from './providerRetry.js';
+import { degradedTurn } from './capability.js';
+import { createUsageTracker, estimateTokens } from './usage.js';
 import { G4F } from 'g4f';
 import {
   cancelMessage, timeoutMessage, toolLine, friendlyError,
@@ -29,6 +38,35 @@ const __dirname = import.meta.dirname; // Node ≥20.6; safe in this project
 const ragDbPath = join(__dirname, 'brain', 'rag.db');
 const ragDb = new RagEngine(ragDbPath);
 let localSessionHistory = [];   // messages loaded from --session file at startup
+
+// ── Context budget ────────────────────────────────────────────────────────────
+// Every provider request is measured with the deterministic chars/4 estimate from
+// cli/budget.js and, when it does not fit, degraded — oldest whole turns dropped
+// first, tool pairs kept together, the current input pinned — instead of hitting
+// the old fixed-size cliff and dying. SWORD_BUDGET_TOKENS (a positive integer)
+// overrides the default ceiling, mainly so tests can drive the degrade path.
+const contextBudgetTokens = (() => {
+  const fromEnv = Number(process.env.SWORD_BUDGET_TOKENS);
+  return Number.isSafeInteger(fromEnv) && fromEnv > 0 ? fromEnv : DEFAULT_BUDGET_TOKENS;
+})();
+// Prepended as a system message to any request that had to be degraded, so the
+// model knows context went missing instead of assuming the session just started.
+// It is request-local only: loadSession() rejects any role outside
+// user/assistant/tool, so writing it into the persisted history would make the
+// session unloadable on resume.
+const CONTEXT_NOTICE = '[Context limit reached — oldest turns dropped. Use /status to see the current budget.]';
+
+/**
+ * Replace a live array's CONTENT without rebinding it. `history` is a const on
+ * purpose: aliases such as `prior` inside turn() and the shared session's message
+ * list observe the same array, so every history update must mutate in place.
+ */
+function replaceAll(target, next) {
+  if (next === target) return; // already the same live array (shared-session alias)
+  const items = Array.isArray(next) ? next : [];
+  target.length = 0;
+  for (const item of items) target.push(item);
+}
 
 // ── External-skill index (module-level cache, invalidated on cwd change) ──────
 let _skillCache = null;
@@ -112,6 +150,7 @@ Usage: sword [--cwd DIRECTORY] [--prompt TEXT] [--json] [--session NAME]
   --mode         coding | marketing-video (default: coding)
   --model        Override the model (default: strongest available, else auto)
   --team         Round-robin team discussion: all 10 agents deliberate, then a writer responds
+  --team-rounds N  Deliberation rounds 1..5 (default 1); later rounds see the vote tally
   --json         One-shot JSON output, diagnostics on stderr
   --help, -h     Show this help
 Interactive: /help /clear /status /team /web /exit
@@ -134,7 +173,7 @@ async function main() {
     model: { type: 'string' }, session: { type: 'string' }, mode: { type: 'string', default: 'coding' },
     json: { type: 'boolean' }, help: { type: 'boolean', short: 'h' },
     shared: { type: 'boolean' }, local: { type: 'boolean' }, 'shared-session': { type: 'string' }, 'import-session': { type: 'string' },
-    team: { type: 'boolean' }
+    team: { type: 'boolean' }, 'team-rounds': { type: 'string', default: '1' }
   } });
   if (values.help) { console.log(HELP); return; }
   if (values.json && !values.prompt) throw new Error('--json requires --prompt');
@@ -155,6 +194,11 @@ async function main() {
   const grantAll = () => { for (const t of ['write_file', 'edit_file', 'run_command', 'save_to_rag']) grants.tools.add(t); };
   // Kept so /undo can reach the checkpoint of the most recent turn.
   let lastExecute = null;
+  // Session-scoped team consensus, surfaced by /status. Declared here (not inside
+  // turn()) because /status reads it from a different scope; without this binding
+  // the assignment inside turn() throws a ReferenceError in ESM strict mode and the
+  // whole turn silently degrades to the offline fallback.
+  let lastTeamAggregate = null;
   // Bind cwd once: the checkpoint module keeps `cwd` explicit (so it stays testable
   // outside a repo) while the tool layer wants a bare `create(label)` callback.
   const checkpointApi = {
@@ -175,6 +219,7 @@ async function main() {
   }
   const useShared = !values.local && !useG4f && (values.shared || Boolean(values['shared-session']));
   if ((useShared && values.session) || (values['import-session'] && (!values.shared || values['shared-session']))) throw new Error('Use --import-session NAME with --shared to copy a local session, not --session');
+  const teamRounds = parseTeamRounds(values['team-rounds']);
   const customProvider = await resolveCustomProvider(values.model, useG4f);
   const config = useG4f ? { url: '', key: '', model: 'auto' } : (customProvider || providerConfig(swordEnv));
   // Prefer a strong tool-capable model over the backend's balanced auto-routing.
@@ -199,7 +244,12 @@ async function main() {
   await ensureSkillBlock(cwd);
   const system = { role: 'system', content: buildSystemPrompt(cwd, shared?.mode || values.mode) + (_skillBlock ? `\n\n${_skillBlock}` : '') + archiveHint(0) };
   const provider = { ...config, model: values.model || shared?.model || selectedModel };
-  let history = shared ? shared.messages : values.session ? await loadSession(cwd, values.session) : [];
+  // Local, append-only usage accounting (.flow/usage.jsonl, mode 0600). Best-effort:
+  // a failed accounting write must never break a turn, so recordTurn is fire-and-forget.
+  const usage = createUsageTracker({ cwd, provider: useG4f ? 'g4f' : 'openai-compatible' });
+  // `history` is a const binding: every update below mutates the array in place
+  // (replaceAll / splice / push) so live aliases keep observing the same array.
+  const history = shared ? shared.messages : values.session ? await loadSession(cwd, values.session) : [];
   // Merge local --session history so prior turns are visible to the LLM.
   // Deduplicate by (role, content) so shared backend messages don't double-appear.
   if (values.session && !shared) {
@@ -214,6 +264,9 @@ async function main() {
   let active;
   let teamMode = Boolean(values.team);
   let archivedCount = 0;
+  // Highest retry attempt seen in the current turn, reset at each turn start so the
+  // capability_lost event reports THIS turn's retries, not a session-running total.
+  let lastRetryAttempts = 0;
   // ── Session lifetime ────────────────────────────────────────────────────────
   // The prompt only ends on an explicit request: /exit, /quit, Ctrl+D or a
   // confirmed Ctrl+C. Nothing else — a failing command, a closed stdin, an
@@ -253,10 +306,74 @@ async function main() {
   };
   if (interactive) rl = makeInterface();
   process.on('SIGINT', cancel);
+  // ── Provider resilience ────────────────────────────────────────────────────
+  // Every provider call runs through withRetry + the shared circuit breaker: 429/5xx
+  // and network failures are retried with backoff+jitter, an auth/404/capability
+  // failure is surfaced immediately, and a genuinely-down provider opens the breaker
+  // so repeated turns fail fast instead of hammering it. A user cancel is never
+  // retried. Retry happens at the REQUEST level only — runTurn already folded the
+  // previous tool round into history — so a retried step cannot double-execute tools.
+  function resilient(rawRequest) {
+    return messages => withRetry(
+      async () => {
+        if (!providerHealth.allow()) throw circuitOpenError();
+        try {
+          const response = await rawRequest(messages);
+          providerHealth.onSuccess();
+          return response;
+        } catch (error) {
+          providerHealth.onFailure(classifyError(error));
+          throw error;
+        }
+      },
+      {
+        signal: active?.signal,
+        onRetry: info => {
+          lastRetryAttempts = Math.max(lastRetryAttempts, info.attempt);
+          console.error(`[sword] provider ${info.kind} failure — retry ${info.attempt} in ${info.delayMs}ms`);
+        }
+      }
+    );
+  }
+  // ── Context budget: project EVERY provider call, degrade honestly ──────────
+  // Wrapping the request function (rather than the message list once per turn)
+  // means runTurn's tool loop is covered too: each step's grown message list is
+  // projected with projectRequest() and, over budget, degraded BEFORE the
+  // network call. Degradation is request-local — `history` and the persisted
+  // session keep every message; only what travels on the wire is trimmed.
+  function budgeted(rawRequest, { report = true } = {}) {
+    const request = resilient(rawRequest);
+    return async messages => {
+      const projected = projectRequest({ messages, tools: toolDefinitions });
+      if (projected.tokens <= contextBudgetTokens) return request(messages);
+      // Over budget: degrade in the documented order. This throws only when
+      // system + tools + current input alone exceed the budget — the genuinely
+      // irreducible case — and that error surfaces instead of a silent over-send.
+      const outcome = degrade({ messages, tools: toolDefinitions, budgetTokens: contextBudgetTokens });
+      // Observable `context_budget` event on stderr (JSON line): budget pressure
+      // is a first-class session signal, alongside the human-readable notice.
+      const budgetEvent = contextBudgetEvent({ projectedTokens: projected.tokens, budgetTokens: contextBudgetTokens, events: outcome.events });
+      if (report) {
+        console.error(`[sword] context_budget ${JSON.stringify(budgetEvent)}`);
+        const dropped = outcome.events.filter(event => event.type === 'drop-turns').reduce((sum, event) => sum + event.messages, 0);
+        const shrunk = outcome.events.filter(event => event.type === 'shrink-tool-result').length;
+        const how = [dropped ? `dropped ${dropped} old message(s)` : '', shrunk ? `truncated ${shrunk} tool result(s)` : '']
+          .filter(Boolean).join('; ');
+        console.error(`[sword] Context over budget (${projected.tokens} > ${contextBudgetTokens} tokens): ${how || 'degraded'}; the current input was kept.`);
+      }
+      // Honest notice + optional archive hint, prepended as a system message.
+      // degrade() pinned the system prompt and the current input, so neither is
+      // touched here; the notice itself is deliberately not persisted to history.
+      const notice = archivedCount > 0 ? `${CONTEXT_NOTICE}${archiveHint(archivedCount)}` : CONTEXT_NOTICE;
+      return request([{ role: 'system', content: notice }, ...outcome.messages]);
+    };
+  }
   async function turn(prompt) {
     active = new AbortController();
     let completed = null;
     let streamed = false;
+    const turnStartedAt = Date.now();
+    lastRetryAttempts = 0;
     if (interactive) {
       // A plain "Thinking…" line: ora's TTY spinner loops forever when the
       // terminal reports 0 columns and puts stdin in raw mode behind readline.
@@ -277,7 +394,7 @@ async function main() {
     try {
       if (shared) {
         shared = await client.getSession(shared.id);
-        history = shared.messages;
+        replaceAll(history, shared.messages); // refresh in place; never rebind `history`
       }
       const context = shared ? await client.context(shared.id, prompt) : '';
       const prior = shared ? recentContext(history) : history;
@@ -304,27 +421,36 @@ async function main() {
         : [turnSystem, ...prior, { role: 'user', content: prompt }];
 
       // ── Fix C: Team mode round-robin ────────────────────────────────────────
+      // teamRounds re-runs the roster; each round after the first sees the vote
+      // tally so far, and the writer receives the aggregateVotes() consensus.
       let result;
+      let lastAggregate = null;
+      // lastTeamAggregate is session-scoped so /status can report consensus.
+      lastTeamAggregate = null;
       if (teamMode) {
-        if (!values.json && interactive) console.error(chalk.dim('\n[Team] Round-robin discussion starting...\n'));
+        if (!values.json && interactive) console.error(chalk.dim(`\n[Team] Round-robin discussion starting (${teamRounds} round(s))...\n`));
         const execute = createTools({ cwd, approve, signal: active.signal, timeout: 120000, grants, ragDb, checkpoint: checkpointApi });
         lastExecute = execute;
         const discussion = [];
         let teamHistory = [...inputs];
         const maxPerAgent = 1500;
+        for (let round = 0; round < teamRounds; round++) {
         // Cycle through registered character agents
         for (let i = 0; i < TEAM_CHARACTERS.length; i++) {
           const charName = TEAM_CHARACTERS[i];
           try {
             const charPrompt = await brainPrompt(charName) || `You are ${charName}. Contribute your perspective concisely.`;
+            const tallyNote = lastAggregate ? `\n\nCurrent vote tally after round ${round}: ${formatTeamSummary(lastAggregate)}.` : '';
             const agentInputs = [
-              { role: 'system', content: `${charPrompt}\n\nYou are one of 10 agents discussing this request. Be specific and actionable. Max ${maxPerAgent} chars.` },
+              { role: 'system', content: `${charPrompt}\n\nYou are one of 10 agents discussing this request. Be specific and actionable. Max ${maxPerAgent} chars.${tallyNote}` },
               ...teamHistory.slice(1),   // skip system for brevity
               { role: 'user', content: prompt }
             ];
             const agentResult = await runTurn({
               messages: agentInputs,
-              request: useG4f ? createG4fRequest(toolDefinitions, active.signal, undefined) : createRequest(provider, toolDefinitions, active.signal, undefined),
+              // Team sub-calls degrade like any other request; they stay silent so
+              // one over-budget turn doesn't print the notice ten times.
+              request: budgeted(useG4f ? createG4fRequest(toolDefinitions, active.signal, undefined) : createRequest(provider, toolDefinitions, active.signal, undefined), { report: false }),
               execute,
               signal: active.signal,
               maxSteps: 3,
@@ -332,23 +458,27 @@ async function main() {
               onCheckpoint: () => {}
             });
             const reply = (agentResult.text || '').slice(0, maxPerAgent);
-            discussion.push({ character: charName, response: reply });
+            discussion.push({ character: charName, response: reply, round });
             teamHistory = [...teamHistory, { role: 'assistant', content: `[${charName}]: ${reply}` }];
           } catch { /* skip unavailable agents */ }
         }
+        lastAggregate = aggregateVotes(discussion);
+        lastTeamAggregate = lastAggregate;
+        } // end rounds loop
         // Writer agent synthesizes the discussion into a final response
         const writerName = WRITER_CHARACTERS[0];
         try {
           const writerPrompt = await brainPrompt(writerName) || `You are ${writerName}. Synthesize team discussions into clear final responses.`;
+          const consensus = lastAggregate?.winner ? `\n\nTeam consensus after ${lastAggregate.rounds} round(s): winner ${lastAggregate.winner} — ${formatTeamSummary(lastAggregate)}.` : '';
           const writerInputs = [
-            { role: 'system', content: `${writerPrompt}\n\nYou are the designated writer. Review the team discussion below and produce a single coherent final response that addresses the user's request. Do not reference the team discussion process.` },
+            { role: 'system', content: `${writerPrompt}\n\nYou are the designated writer. Review the team discussion below and produce a single coherent final response that addresses the user's request. Do not reference the team discussion process.${consensus}` },
             { role: 'system', content: 'TEAM DISCUSSION TRANSCRIPT:\n' +
               discussion.map(d => `[${d.character}]: ${d.response}`).join('\n\n') },
             { role: 'user', content: prompt }
           ];
           const writerResult = await runTurn({
             messages: writerInputs,
-            request: useG4f ? createG4fRequest(toolDefinitions, active.signal, values.json ? undefined : onToken) : createRequest(provider, toolDefinitions, active.signal, values.json ? undefined : onToken),
+            request: budgeted(useG4f ? createG4fRequest(toolDefinitions, active.signal, values.json ? undefined : onToken) : createRequest(provider, toolDefinitions, active.signal, values.json ? undefined : onToken)),
             execute,
             signal: active.signal,
             onEvent: (name, info) => { if (info === undefined) console.error(`  ${toolLine(name)}`); else console.error(`  ${toolLine(name, info)}`); },
@@ -375,7 +505,7 @@ async function main() {
           : undefined;
         result = await runTurn({
           messages: inputs,
-          request: useG4f ? createG4fRequest(toolDefinitions, active.signal, onToken) : createRequest(provider, toolDefinitions, active.signal, onToken), execute, signal: active.signal,
+          request: budgeted(useG4f ? createG4fRequest(toolDefinitions, active.signal, onToken) : createRequest(provider, toolDefinitions, active.signal, onToken)), execute, signal: active.signal,
           onEvent: (name, info) => {
             if (info === undefined) { console.error(`  ${toolLine(name)}`); }
             else { console.error(`  ${toolLine(name, info)}`); }
@@ -395,15 +525,19 @@ async function main() {
           throw new Error(`${error.message}. Completed turn saved locally as ${recovery}; do not repeat tool actions blindly.`);
         }
       }
-      history = nextHistory;
+      replaceAll(history, nextHistory); // in place: the binding is const and aliases must see the update
       // Archive messages that exceed the retention window so they stop consuming
       // context while staying searchable in the RAG engine.
       if (!shared && history.length > HISTORY_THRESHOLD) {
         try {
-          const { archived, keepCount } = await archiveMessages(history, HISTORY_THRESHOLD);
+          // Use `kept` — NOT a re-slice of `history`: kept carries the single
+          // placeholder stub, and re-slicing would drop it, making a resumed
+          // session pretend the conversation had just started. Passing
+          // archivedCount keeps the stub's tally honest across archive passes.
+          const { archived, kept } = await archiveMessages(history, HISTORY_THRESHOLD, archivedCount);
           if (archived > 0) {
             archivedCount += archived;
-            history = keepCount > 0 ? history.slice(-keepCount) : [];
+            replaceAll(history, kept);
             console.error(`[sword] Archived ${archived} turn(s) into knowledge library; kept ${history.length} recent messages.`);
           }
         } catch { /* best-effort; don't break the session */ }
@@ -411,6 +545,16 @@ async function main() {
       if (values.session) await saveSession(cwd, values.session, history);
       indicator?.stop();
       indicator = null;
+      // Usage accounting is best-effort and never awaited: the turn is already
+      // complete, and a failed .flow/usage.jsonl write must not surface as an error.
+      usage.recordTurn({
+        model: provider.model,
+        provider: useG4f ? 'g4f' : 'openai-compatible',
+        promptTokens: estimateTokens(JSON.stringify(inputs)),
+        completionTokens: estimateTokens(result.text || ''),
+        estimated: true,
+        durationMs: Date.now() - turnStartedAt,
+      }).catch(() => {});
       if (values.json) { console.log(JSON.stringify({ response: result.text })); }
       else if (streamed) process.stderr.write('\n');
       else if (interactive) console.log(markdownLite(result.text, true));
@@ -436,10 +580,18 @@ async function main() {
         // recovery_<ts> sessions were already written above — point the user at them
         // instead of letting the chat-only reply look like the whole result.
         const saved = completed && completed.length > history.length;
+        // Structured, machine-readable fact that THIS turn lost its tools: the legacy
+        // notice string is kept, and the same fact is emitted as a capability_lost
+        // event so a caller (or --json consumer) is never left guessing from prose.
+        const lost = degradedTurn({
+          retryAttempts: lastRetryAttempts,
+          lost: [{ capability: 'tools', provider: provider.model, reason: safe(error?.message ?? error) }],
+        });
+        console.error(`[sword] ${JSON.stringify(lost)}`);
         try {
           console.error(`\n${fallbackNotice()}`);
           const res = await attemptFallback(prompt);
-          if (values.json) { console.log(JSON.stringify({ response: res, degraded: true, toolsUsed: false, sessionSaved: saved })); }
+          if (values.json) { console.log(JSON.stringify({ response: res, degraded: true, toolsUsed: false, sessionSaved: saved, retryAttempts: lost.retryAttempts, capability_lost: lost })); }
           else if (interactive) { console.log(markdownLite(res, true)); console.error(saved ? '\nActions completed before the failure are in the saved recovery session.' : ''); }
           else console.log(safe(res));
           return;
@@ -454,12 +606,53 @@ async function main() {
   async function handleLine(line) {
     if (line === '/help') { console.error(HELP + `\n/status  Show session, model, cwd and history.\n/team    Toggle round-robin team discussion mode (10 agents + writer)`); return; }
     if (line === '/status') {
+      // Compute everything BEFORE printing anything: readline drops lines that
+      // arrive while no question() is pending, so an await between the first and
+      // last output line (sessionDiff runs git) would swallow the user's next
+      // input. After the prints below this handler returns synchronously.
+      // Tokens the next request would spend (history + tool schemas) vs. the ceiling.
+      const projected = projectRequest({ messages: history, tools: toolDefinitions });
+      const percent = Math.min(100, Math.round((projected.tokens / contextBudgetTokens) * 100));
+      // Workspace state comes from git, so it stays correct even after archiving
+      // trimmed the message log down to the placeholder stub. No session-start
+      // snapshot exists yet, so `snapshot` is null and sessionDiff falls back to
+      // the oldest surviving checkpoint (or reports unavailable outside a repo).
+      const diff = await sessionDiff({ cwd, snapshot: null, history, archivedCount });
+      const block = formatSessionDiff(diff);
       if (shared) {
         console.error(statusLine({ mode: values.mode, model: provider.model, cwd, session: shared.id, revision: shared.revision, historyCount: history.length, approval: 'required for all edits and commands', extra: teamMode ? 'team: ON' : undefined }));
       } else if (values.session) {
         console.error(statusLine({ mode: values.mode, model: provider.model, cwd, session: values.session, historyCount: history.length, approval: 'required for all edits and commands', extra: teamMode ? 'team: ON' : undefined }));
       } else {
         console.error(statusLine({ mode: values.mode, model: provider.model, cwd, historyCount: history.length, approval: 'required for all edits and commands', extra: teamMode ? 'team: ON' : undefined }));
+      }
+      console.error(`  ${chalk.dim('context:')}   ${projected.tokens} / ${contextBudgetTokens} tokens (${percent}%)`);
+      // Session usage so far: from the in-memory tracker (the jsonl on disk is the
+      // durable history; this is the running total for the live session).
+      const spend = usage.session();
+      if (spend.turns > 0) {
+        const cost = spend.cost_usd ? `, $${spend.cost_usd.toFixed(4)}` : '';
+        console.error(`  ${chalk.dim('usage:')}     ${spend.turns} turn(s), ${spend.tokens_in} in / ${spend.tokens_out} out tokens${cost} → ${usage.file}`);
+      }
+      if (archivedCount > 0) console.error(`  ${chalk.dim('archived:')}  ${archivedCount} turn(s) live in the knowledge library`);
+      if (block) console.error(`\n${block}`);
+      // Phase 4 ecosystem state: MCP servers (redacted), verified project
+      // skills, and the team vote consensus. All read-only and best-effort —
+      // /status must never fail because an optional subsystem did.
+      try {
+        const mcpState = loadMcpConfig({ cwd });
+        if (mcpState === null) console.error(`  ${chalk.dim('mcp:')}       no config (.sword/mcp.json)`);
+        else {
+          const summary = describeConfigSummary(mcpState);
+          console.error(`  ${chalk.dim('mcp:')}       ${summary ? summary.join('; ') : 'configured, no usable servers'}${mcpState.errors.length ? ` (${mcpState.errors.length} warning(s))` : ''}`);
+        }
+      } catch { /* optional subsystem; never break /status */ }
+      try {
+        const installed = listInstalledSkills({ cwd });
+        console.error(`  ${chalk.dim('skills:')}    ${installed.length ? installed.map(s => s.name).join(', ') : 'no verified project skills'}`);
+      } catch { /* optional subsystem; never break /status */ }
+      if (teamMode) {
+        console.error(`  ${chalk.dim('team:')}      ON (${TEAM_CHARACTERS.length} agents, ${teamRounds} round(s))${lastTeamAggregate?.winner ? `; consensus: ${lastTeamAggregate.winner}` : ''}`);
       }
       return;
     }
@@ -470,7 +663,7 @@ async function main() {
     }
     if (line === '/clear') {
       if (shared) shared = await client.saveMessages(shared.id, [], shared.revision);
-      history = [];
+      history.length = 0; // in place; the binding is const
       if (values.session) await saveSession(cwd, values.session, history);
       console.error('Conversation cleared.');
       return;
@@ -627,7 +820,7 @@ Usage: /provider add <name> <baseUrl> <apiKey> <model>
         (changed?.total ? ` Reverted ${changed.tracked} modified, ${changed.untracked} added.` : ''));
       // The agent's view of the tree is now stale, so drop its history rather than
       // let it reason about files that no longer exist.
-      history = [];
+      history.length = 0; // in place; the binding is const
       console.error('Conversation history cleared; the agent must re-read the project.');
       return;
     }

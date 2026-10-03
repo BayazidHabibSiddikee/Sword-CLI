@@ -94,9 +94,19 @@ function diffBlock(before, after) {
 }
 
 export function approvePrompt(proposal) {
-  const { tool, path: pathName, before = null, after = null, command, args, timeout } = proposal;
+  const { tool, path: pathName, before = null, after = null, command, args, timeout, batch = false } = proposal;
   const lines = [''];
-  if (tool === 'write_file') {
+  // A batched change_many approval shows ONE prompt for the whole atomic unit:
+  // one header plus one diff block per file, so the user approves the batch or
+  // nothing — never file-by-file.
+  if (batch === true && Array.isArray(before) && before.length) {
+    lines.push(`  ${chalk.yellow(`apply ${before.length} file(s) as one atomic batch`)}`);
+    for (const change of before) {
+      if (change?.full) lines.push(`  ${chalk.dim(String(change.full))}`);
+      else if (change?.path) lines.push(`  ${chalk.dim(String(change.path))}`);
+      lines.push(...diffBlock(change?.before ?? null, change?.after ?? null));
+    }
+  } else if (tool === 'write_file') {
     const bytes = typeof after === 'string' ? Buffer.byteLength(after, 'utf8') : 0;
     const verb = before === null ? 'create' : 'overwrite';
     lines.push(`  ${chalk.yellow(`${verb} ${pathName} (${bytes} bytes)`)}`);
