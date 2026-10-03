@@ -14,16 +14,19 @@ providersRouter.get('/', (_req: Request, res: Response) => {
     GROUP BY platform
   `).all() as { platform: string; model_count: number }[];
 
-  const result = rows.map(r => ({
-    id: r.platform,
-    name: r.platform,
-    modelCount: r.model_count,
-    // `models.platform` is a plain TEXT column, so a row can hold a platform
-    // this build no longer knows about (e.g. one dropped by a later migration).
-    // Narrow before probing the provider registry; unknown platforms report
-    // `enabled: false` instead of crashing the route.
-    enabled: isPlatform(r.platform) ? hasProvider(r.platform) : false,
-  }));
+  const result = rows.map(r => {
+    const platform = r.platform as string;
+    return {
+      id: platform,
+      name: platform,
+      modelCount: r.model_count,
+      // `models.platform` is a plain TEXT column, so a row can hold a platform
+      // this build no longer knows about (e.g. one dropped by a later migration).
+      // Narrow before probing the provider registry; unknown platforms report
+      // `enabled: false` instead of crashing the route.
+      enabled: isPlatform(platform) ? hasProvider(platform) : false,
+    };
+  });
 
   res.json(result);
 });
