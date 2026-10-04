@@ -8,8 +8,8 @@
 
 ```bash
 # Clone and install
-git clone https://github.com/BayazidHabibSiddikee/character-flow.git
-cd character-flow
+git clone https://github.com/BayazidHabibSiddikee/Sword-CLI.git
+cd Sword-CLI
 npm install --prefix swordcli
 
 # Start everything (backend + agent + web UI)
@@ -27,7 +27,7 @@ sword.mjs                          # Unified launcher (manages all services)
 ├── sword-server (port 3101)       # Fallback minimal API (no install)
 ├── web UI (port 3002)             # Vite React dashboard
 ├── ollama (port 11434, optional)  # Local models
-└── cli/flow.js                    # Main CLI agent (tools, sessions, approvals)
+└── cli/agent.js                   # Main CLI agent (tools, sessions, approvals)
 ```
 
 ## Core Features
@@ -135,6 +135,37 @@ download_book query="1984" source=openlibrary format=pdf download_dir=/tmp/books
 **Sources:**
 - **Project Gutenberg** (gutenberg.org) — 70,000+ free ebooks, multiple formats
 - **Open Library** (openlibrary.org) — Millions of books, lending library
+- **ManyBooks** (manybooks.net) — 50,000+ free ebooks
+- **Feedbooks** (feedbooks.com) — Public domain & original books
+- **Standard Ebooks** (standardebooks.org) — High-quality, curated public domain
+
+**Browse by Topic/Category:**
+```bash
+# Browse by genre/subject
+download_book query="subject:fiction" source=all format=epub
+download_book query="subject:history" source=gutenberg format=text
+download_book query="author:twain" source=openlibrary format=epub
+download_book query="subject:science fiction" format=pdf max_results=10
+```
+
+**Popular Topics/Categories:**
+| Category | Gutenberg Subject | Open Library Subject |
+|----------|-------------------|----------------------|
+| Fiction | `fiction`, `novel` | `fiction`, `novel` |
+| Science Fiction | `science fiction` | `science fiction` |
+| Fantasy | `fantasy` | `fantasy` |
+| Mystery | `mystery`, `detective` | `mystery`, `detective` |
+| Romance | `romance` | `romance` |
+| History | `history` | `history` |
+| Biography | `biography` | `biography` |
+| Science | `science` | `science` |
+| Philosophy | `philosophy` | `philosophy` |
+| Poetry | `poetry` | `poetry` |
+| Children | `children`, `juvenile` | `juvenile`, `children` |
+| Mystery/Thriller | `mystery`, `thriller` | `mystery`, `thriller` |
+| Horror | `horror` | `horror` |
+| Adventure | `adventure` | `adventure` |
+| Classics | `classics` | `classics` |
 
 ### `send_email` — Send emails via SMTP
 ```bash
@@ -239,6 +270,28 @@ IMAP_TLS=                 # Use TLS (default: true)
 TELEGRAM_BOT_TOKEN=       # Bot token from @BotFather
 TELEGRAM_CHAT_ID=         # Default chat ID for telegram_send
 ```
+
+---
+
+### Web UI Configuration
+
+The web dashboard (http://localhost:3002) provides a **Settings** page to configure all integrations without editing environment files:
+
+**Settings → Integrations** (`/settings/integrations`)
+
+| Integration | Configuration | Description |
+|-------------|---------------|-------------|
+| **Telegram** | Bot Token, Chat ID | Send messages, receive updates via Bot API |
+| **Email (SMTP)** | Host, Port, User, Pass, Secure | Send emails via SMTP |
+| **Email (IMAP)** | Host, Port, User, Pass, TLS | Read emails, search inbox |
+| **Book Download** | Download directory, default source/format | Configure book download defaults |
+| **Routines** | Default schedule, working directory | Standing task defaults |
+
+**To configure:**
+1. Open http://localhost:3002/settings/integrations
+2. Fill in your credentials
+3. Click **Save** — settings are encrypted and stored in `swordcli/server/data/settings.json`
+4. Changes take effect immediately (no restart needed)
 
 ---
 
@@ -443,7 +496,7 @@ npm run build --prefix swordcli/client
 
 | File | Purpose |
 |------|---------|
-| `cli/flow.js` | Main CLI entry, REPL loop, session management |
+| `cli/agent.js` | Main CLI entry, REPL loop, session management |
 | `cli/agent.js` | Turn execution, tool execution, provider routing |
 | `cli/tools.js` | All tool definitions + execution logic |
 | `cli/providerFallback.js` | Free LLM fallback chain (g4f + free endpoints) |
