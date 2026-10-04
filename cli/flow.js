@@ -15,6 +15,7 @@ import { resolveModel } from './model.js';
 import { RagEngine } from './brain/rag.js';
 import { sessions } from './skills/sessions.js';
 import { loadMcpConfig } from './mcpConfig.js';
+import { runMcpCommand } from './mcpManage.js';
 import { closeMcpClients, collectMcpDefinitions } from './mcp/dispatch.js';
 import { listInstalledSkills } from './skills/store.js';
 import { aggregateVotes, formatTeamSummary, parseTeamRounds, TEAM_ROUNDS_DEFAULT } from './team.js';
@@ -151,8 +152,12 @@ Usage: sword [--cwd DIRECTORY] [--prompt TEXT] [--json] [--session NAME]
   --model        Override the model (default: strongest available, else auto)
   --team         Round-robin team discussion: all 10 agents deliberate, then a writer responds
   --team-rounds N  Deliberation rounds 1..5 (default 1); later rounds see the vote tally
-  --json         One-shot JSON output, diagnostics on stderr
-  --help, -h     Show this help
+   --json         One-shot JSON output, diagnostics on stderr
+   --help, -h     Show this help
+Subcommands:
+   sword mcp <add|remove|list|test|show|help>   connect to and manage MCP servers
+     (mcp test NAME connects to a server and lists its tools — the same path
+      the agent uses; run it after mcp add to confirm the connection works)
 Interactive: /help /clear /status /team /web /exit
 The session never ends by itself: Ctrl+D exits, Ctrl+C cancels the current turn
 (and exits when pressed twice at the prompt), /exit and /quit exit.
@@ -168,6 +173,15 @@ Default endpoint: http://localhost:3101/v1 (independent sword-server)
 Project content is sent to your chosen provider. Use only trusted workspaces.
 `;
 async function main() {
+  // `mcp` subcommand: manage and connect MCP servers without launching the agent
+  // (or the stack). It parses its own argv and returns an exit code, so a pure
+  // `sword mcp ...` never spins up ollama/api/backend/web or needs a TTY.
+  const mcpArgv = process.argv.slice(2);
+  if (mcpArgv[0] === 'mcp') {
+    const code = await runMcpCommand(mcpArgv);
+    if (code !== 0) process.exitCode = code;
+    return;
+  }
   const { values } = parseArgs({ options: {
     prompt: { type: 'string', short: 'p' }, cwd: { type: 'string' },
     model: { type: 'string' }, session: { type: 'string' }, mode: { type: 'string', default: 'coding' },

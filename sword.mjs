@@ -280,6 +280,13 @@ function stop(name) {
 }
 
 const cmd = process.argv[2];
+if (cmd === 'mcp') {
+  // MCP management never needs the stack (no ollama/api/backend/web, no TTY).
+  // Run the manager directly and exit — starting services here would hang a
+  // plain "add a server" command.
+  const { runMcpCommand } = await import('./cli/mcpManage.js');
+  process.exit(await runMcpCommand(process.argv.slice(2)));
+}
 if (cmd === 'up') {
   const ollama = await ensureOllama().catch(e => `FAILED: ${e.message}`);
   if (ollama === 'started' || ollama === 'already-running') warnMissingOllamaModels();
