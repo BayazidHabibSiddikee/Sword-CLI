@@ -85,9 +85,11 @@ export function testCommandBlock(raw) {
     + '(with approval) and report the OBSERVED result, not an expectation; if it is unavailable, say so explicitly.';
 }
 
-export function buildSystemPrompt(cwd, mode = 'coding') {
-  if (!['coding', 'marketing-video'].includes(mode)) throw new Error(`Unknown mode: ${mode}. Choose coding or marketing-video.`);
-  const role = mode === 'marketing-video' ? MARKETING_VIDEO : `You are SwordCLI (persona: Izuku) — a philosophical guardian of knowledge, born from the fusion of three great minds:
+/**
+ * The Izuku persona — opt-in only via --persona izuku or SWORD_PERSONA=izuku.
+ * @type {string}
+ */
+const PERSONA_IZUKU = `You are SwordCLI (persona: Izuku) — a philosophical guardian of knowledge, born from the fusion of three great minds:
 1. Izuku Midoriya — the analytical notebook-taker, the hero who studies everything, records every detail, connects every dot.
 2. Multi-Laws Wisdom — the collector of universal principles.
 3. Islamic Faith & Health Consciousness.
@@ -95,8 +97,21 @@ export function buildSystemPrompt(cwd, mode = 'coding') {
 You are a philosopher-scholar-hero-Muslim. You think in systems. You see connections between seemingly unrelated things.
 YOUR VOICE: Earnest but not naive, analytical but accessible. You close thoughtful exchanges with "Wallahi" or "MashaAllah".
 
-CRITICAL INSTRUCTION: You are Izuku. Act with tools to change code, inspect, and watch the system.
- ACT WITH TOOLS, DON'T JUST DESCRIBE: when the user asks for code, a script, configuration, tests or
+CRITICAL INSTRUCTION: You are Izuku. Act with tools to change code, inspect, and watch the system.`;
+
+/**
+ * Default neutral engineering identity — no character persona.
+ * This is the out-of-the-box coding prompt for fresh installs.
+ * @type {string}
+ */
+const CODING_IDENTITY = `You are SwordCLI — a precise, efficient coding assistant.`;
+
+/** The character personas actually implemented here. Only `izuku` has a prompt;
+ * the others advertised in docs are not wired, so --persona validates against this
+ * list and warns on anything else instead of silently falling back to neutral. */
+export const KNOWN_PERSONAS = ['izuku'];
+
+const CODING_INSTRUCTIONS = ` ACT WITH TOOLS, DON'T JUST DESCRIBE: when the user asks for code, a script, configuration, tests or
 documentation, create or update the real files with write_file (new files), edit_file (a single
 occurrence) or apply_patch (a unified diff that touches several files or several hunks in one
 atomic, single-approval step). A chat-only code dump is a failed deliverable. If you truly cannot
@@ -113,5 +128,20 @@ project and review your changes. Never commit, push, tag, stash-drop, reset --ha
 otherwise rewrite history without explicit user instruction and approval.
 WORK INCREMENTALLY: prefer small, focused, reviewable changes over one large rewrite; keep edits minimal
 and consistent with existing naming and structure; never assume a dependency is installed.`;
+
+export function buildSystemPrompt(cwd, mode = 'coding', persona = null) {
+  if (!['coding', 'marketing-video'].includes(mode)) throw new Error(`Unknown mode: ${mode}. Choose coding or marketing-video.`);
+  // Resolve persona: explicit arg > SWORD_PERSONA env > default (none).
+  // The persona only applies in coding mode; marketing-video always uses its own role.
+  const activePersona = typeof persona === 'string' ? persona.toLowerCase().trim()
+    : (process.env.SWORD_PERSONA || '').toLowerCase().trim();
+  let role;
+  if (mode === 'marketing-video') {
+    role = MARKETING_VIDEO;
+  } else if (activePersona === 'izuku') {
+    role = `${PERSONA_IZUKU}\n${CODING_INSTRUCTIONS}`;
+  } else {
+    role = `${CODING_IDENTITY}\n${CODING_INSTRUCTIONS}`;
+  }
   return `${role}\nProject directory: ${cwd}\n${COMMON}`;
 }

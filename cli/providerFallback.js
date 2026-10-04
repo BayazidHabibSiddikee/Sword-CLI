@@ -147,6 +147,7 @@ export async function attemptFallback(prompt, opts = {}) {
   }
 
   const reason = errors.map(e => `- ${e.provider}: ${e.error}`).join('\n') || 'unknown';
-  // Offline fallback - provide a useful response without external API
-  return `[SwordCLI Offline Mode]\n\nYour prompt: "${prompt}"\n\nNo external LLM provider is available.\nTried:\n${reason}\n\nTo enable full AI capabilities:\n1. Start the in-tree API background + agent: \`./sword.mjs\` (API on :3001, minimal API on :3101)\n2. First run needs the swordcli workspace deps: \`npm install --prefix swordcli\`\n3. Or set OPENAI_BASE_URL and OPENAI_API_KEY to your provider\n4. Or set SWORDCLI_BASE_URL and SWORDCLI_TOKEN for a remote Sword API\n5. Or set SWORD_FREE_FALLBACK_URL to an OpenAI-compatible free endpoint\n\nYou can still use local tools (file read/write, command execution, search) in the meantime.`;
+  // No LLM is available. Be honest: without a working provider nothing can call tools,
+  // read files or run commands. The old message falsely implied local tools still worked.
+  return `[SwordCLI: No provider available]\n\nYour prompt: "${prompt}"\n\nNo LLM provider is reachable — all providers failed:\n${reason}\n\nWithout a working provider the agent CANNOT read files, write code, or run commands.\nRun \`sword doctor\` for an automated diagnosis and fix steps, or configure a provider:\n  • OPENAI_BASE_URL + OPENAI_API_KEY (any OpenAI-compatible endpoint)\n  • SWORDCLI_BASE_URL + SWORDCLI_TOKEN  (remote Sword backend)\n  • Start the local stack: \`./sword.mjs up\`  then re-run sword`;
 }

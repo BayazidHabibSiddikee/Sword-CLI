@@ -320,6 +320,146 @@ if (cmd === 'backend') { console.log(`sword-server: ${await ensureBackend()}`); 
 if (cmd === 'api') { console.log(`swordcli API: ${await ensureSwordcliApi()}`); process.exit(0); }
 if (cmd === 'web') { console.log(`web: ${await ensureWeb()}`); process.exit(0); }
 
+if (cmd === 'doctor') {
+  // ── sword doctor ─────────────────────────────────────────────────────────────
+  // A preflight command that reports the EXACT reason the agent is degraded and
+  // prints the one copy-paste fix. Replaces having to read the README.
+  //
+  // Exit code 0 = fully healthy (tool-capable provider confirmed)
+  //         1 = degraded but fixable (prints fix)
+  //         2 = unknown / env already configured externally
+  const c = { ok: '\u2714', warn: '\u26a0\ufe0f ', fail: '\u2718', info: '\u2139\ufe0f ' };
+  const issues = [];
+  const fixes = [];
+
+  // 1. Check if a user-provided endpoint is already configured (healthy case)
+  const userEndpoint = process.env.OPENAI_BASE_URL || process.env.PROXY_HOST || process.env.SWORDCLI_BASE_URL;
+  const userKey = process.env.OPENAI_API_KEY || process.env.SWORDCLI_TOKEN;
+  if (userEndpoint) {
+    console.log(`${c.ok} External provider configured: ${userEndpoint}`);
+    if (!userKey) {
+      console.log(`${c.warn} No API key set for external endpoint — set OPENAI_API_KEY or SWORDCLI_TOKEN`);
+      issues.push('no-key-for-external-endpoint');
+      fixes.push('  export OPENAI_API_KEY=<your-key>');
+    } else {
+      // Quick reachability check
+      try {
+        const testUrl = userEndpoint.replace(/\/+$/, '') + (userEndpoint.endsWith('/v1') ? '/models' : '/v1/models');
+        const r = await fetch(testUrl, { headers: { Authorization: `Bearer ${userKey}` }, signal: AbortSignal.timeout(4000) });
+        if (r.ok || r.status === 404) {
+          console.log(`${c.ok} External endpoint reachable (HTTP ${r.status}) — provider is healthy`);
+        } else if (r.status === 401 || r.status === 403) {
+          console.log(`${c.fail} External endpoint returned ${r.status} — API key rejected`);
+          issues.push('bad-external-key');
+          fixes.push('  export OPENAI_API_KEY=<correct-key>');
+        } else {
+          console.log(`${c.warn} External endpoint returned HTTP ${r.status}`);
+          issues.push('external-endpoint-error');
+        }
+      } catch (e) {
+        console.log(`${c.fail} External endpoint unreachable: ${e.message}`);
+        issues.push('external-endpoint-down');
+        fixes.push(`  # check that ${userEndpoint} is up`);
+      }
+    }
+    if (!issues.length) { process.exit(0); } else { console.log('\nFix:\n' + fixes.join('\n')); process.exit(1); }
+  }
+
+  // 2. Check sword-server (:3101) — the no-install primary backend
+  console.log('\n[sword doctor] Checking local backends...\n');
+  const apiOk = await portOpen(API_PORT, '/health');
+  if (apiOk) {
+    console.log(`${c.ok} sword-server :${API_PORT} is up`);
+    // Try to read the local token and ping /v1/models
+    const localToken = swordToken();
+    if (!localToken) {
+      console.log(`${c.warn} sword-server is up but its token could not be read (DB may be initializing)`);
+      console.log(`     Try again in a moment, or run: ./sword.mjs status`);
+      issues.push('no-sword-server-token');
+    } else {
+      try {
+        const r = await fetch(`http://127.0.0.1:${API_PORT}/v1/models`, {
+          headers: { Authorization: `Bearer ${localToken}` }, signal: AbortSignal.timeout(4000),
+        });
+        if (r.ok) {
+          const body = await r.json().catch(() => ({}));
+          const models = Array.isArray(body?.data) ? body.data : [];
+          if (models.length > 0) {
+            console.log(`${c.ok} sword-server: token valid, ${models.length} model(s) available → tool-capable provider confirmed`);
+          } else {
+            console.log(`${c.warn} sword-server: token valid but no models listed — provider catalog may be empty`);
+            issues.push('no-models');
+            fixes.push('  # Add a provider: visit http://localhost:3101 or set OPENAI_BASE_URL + OPENAI_API_KEY');
+          }
+        } else if (r.status === 401 || r.status === 403) {
+          console.log(`${c.fail} sword-server: token was rejected (stale DB?) — run: ./sword.mjs down && ./sword.mjs up`);
+          issues.push('bad-sword-server-token');
+          fixes.push('  ./sword.mjs down && ./sword.mjs up');
+        } else {
+          console.log(`${c.warn} sword-server /v1/models returned HTTP ${r.status}`);
+          issues.push('sword-server-models-error');
+        }
+      } catch (e) {
+        console.log(`${c.fail} sword-server ping failed: ${e.message}`);
+        issues.push('sword-server-ping-failed');
+      }
+    }
+  } else {
+    console.log(`${c.fail} sword-server :${API_PORT} is NOT running (no response on /health)`);
+    issues.push('sword-server-down');
+    fixes.push('  ./sword.mjs up');
+  }
+
+  // 3. Check swordcli API (:3001) — the TypeScript workspace backend
+  const swordcliInfo = await backendInfo(SWORDCLI_PORT);
+  if (swordcliInfo.open) {
+    console.log(`${c.ok} swordcli API :${SWORDCLI_PORT} is up (models=${swordcliInfo.hasModels} agent=${swordcliInfo.hasAgent})`);
+    const swordcliKey = await localSwordcliKey();
+    if (!swordcliKey) {
+      console.log(`${c.warn} swordcli API is up but unified key not found — it may still be initializing`);
+      issues.push('no-swordcli-key');
+    }
+  } else {
+    const swordcliInstalled = existsSync(join(SWORDCLI_DIR, 'node_modules', '.bin', 'tsx'));
+    if (swordcliInstalled) {
+      console.log(`${c.info} swordcli API :${SWORDCLI_PORT} not running (installed but not started — optional)`);
+    } else {
+      console.log(`${c.info} swordcli API :${SWORDCLI_PORT} not running (not installed — optional; uses sword-server fallback)`);
+      if (!apiOk) fixes.push('  # To install the full API: npm install --prefix swordcli && ./sword.mjs up');
+    }
+  }
+
+  // 4. Check if g4f fallback would engage (no token + no backends)
+  if (!apiOk && !swordcliInfo.open) {
+    console.log(`\n${c.fail} NO local backend is reachable. The agent will use g4f (chat-only, NO tools).`);
+    console.log(`     This means: no file reads, no code writes, no commands — just degraded chat.\n`);
+    if (!fixes.length) fixes.push('  ./sword.mjs up  # starts sword-server + optional full API');
+  }
+
+  // 5. Check agent file exists
+  if (!existsSync(AGENT_JS)) {
+    console.log(`${c.fail} Agent file missing: ${AGENT_JS}`);
+    issues.push('agent-missing');
+    fixes.push(`  # Repository may be incomplete — check: ls cli/flow.js`);
+  } else {
+    console.log(`${c.ok} Agent file: ${AGENT_JS}`);
+  }
+
+  // ── Summary ─────────────────────────────────────────────────────────────────
+  console.log('');
+  if (!issues.length) {
+    console.log(`${c.ok} All checks passed — SwordCLI is healthy and tool-capable.`);
+    process.exit(0);
+  } else {
+    console.log(`${c.warn} ${issues.length} issue(s) found. Fix:\n`);
+    for (const fix of [...new Set(fixes)]) console.log(fix);
+    if (fixes.some(f => f.includes('sword.mjs up'))) {
+      console.log('\n  Then re-run: sword doctor');
+    }
+    process.exit(1);
+  }
+}
+
 // ---- powerful agent subcommands (backend-native, no extra deps) ----
 // `serve` exposes the backend agent loop directly; `run` = one-shot turn.
 const TOKEN = swordToken();

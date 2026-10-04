@@ -19,7 +19,9 @@ test('providerFallback uses g4f and validates prompts/results', async () => {
 
   setG4fFactory({ chatCompletion: async () => ({ text: '' }) });
   const offline = await attemptFallback('anything');
-  assert.ok(offline.includes('[SwordCLI Offline Mode]'));
+  // The offline message must be honest: it must NOT claim local tools still work.
+  assert.ok(offline.includes('No provider available') || offline.includes('CANNOT'), 'offline message must not claim tools work without a provider');
+  assert.ok(!offline.includes('You can still use local tools'), 'must not falsely claim local tools work without an LLM');
 
   setG4fFactory(null);
 });

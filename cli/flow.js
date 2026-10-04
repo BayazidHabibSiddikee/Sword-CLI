@@ -7,7 +7,7 @@ import chalk from 'chalk';
 import { providerConfig, createRequest, runTurn, loadSession, saveSession } from './agent.js';
 import { attemptFallback, fallbackNotice } from './providerFallback.js';
 import { createTools, toolDefinitions } from './tools.js';
-import { buildSystemPrompt, buildMemoryBlock, g4fDegradedNotice, subagentPrompt, testCommandBlock } from './prompts.js';
+import { buildSystemPrompt, buildMemoryBlock, g4fDegradedNotice, subagentPrompt, testCommandBlock, KNOWN_PERSONAS } from './prompts.js';
 import { detectTestCommand } from './testCommand.js';
 import { discoverSkills, buildCompactIndex } from './externalSkills.js';
 import { configureSwordBackend, readLocalUnifiedKey } from './backend.js';
@@ -150,42 +150,68 @@ Usage: sword [--cwd DIRECTORY] [--prompt TEXT] [--json] [--session NAME]
   --shared-session ID  Resume a backend session (use its exact workspace)
   --import-session NAME  With --shared, copy a local named session to backend
   --mode         coding | marketing-video (default: coding)
+  --persona      Character persona to use (e.g. --persona izuku). Default: neutral.
+                 Also: SWORD_PERSONA=izuku env var.
   --model        Override the model (default: strongest available, else auto)
   --team         Round-robin team discussion: all 10 agents deliberate, then a writer responds
   --team-rounds N  Deliberation rounds 1..5 (default 1); later rounds see the vote tally
-   --json         One-shot JSON output, diagnostics on stderr
+   --json         One-shot JSON output; includes toolsUsed/toolsRan in the response object
    --help, -h     Show this help
 Subcommands:
-   sword mcp <add|remove|list|test|show|help>   connect to and manage MCP servers
+   sword doctor                      Diagnose provider + tool state; prints exact fix steps
+   sword up|down|status|logs         Manage the local backend stack
+   sword mcp <add|remove|list|test|show|help>   Connect to and manage MCP servers
      (mcp test NAME connects to a server and lists its tools — the same path
       the agent uses; run it after mcp add to confirm the connection works)
-Interactive: /help /clear /status /team /web /exit
+Power tools available to the model (use naturally in your prompts):
+   apply_patch    Apply a unified diff atomically across multiple files (one approval step)
+   task           Spawn a parallel read-only sub-agent to investigate a question
+   web_search     Search the web (DuckDuckGo, no key required)
+   write_file / edit_file / run_command   Create, edit, and execute (each requires approval)
+Interactive commands: /help /clear /status /team /web /provider /undo /exit
 The session never ends by itself: Ctrl+D exits, Ctrl+C cancels the current turn
 (and exits when pressed twice at the prompt), /exit and /quit exit.
 Every file edit and command requires approval. At the prompt: y allows once,
-a allows that tool for the rest of the session, A allows every write and command
-for this session, N denies. Grants live only in this process and are never written
-to disk. Commands are NOT sandboxed.
+a allows that tool for the rest of the session, A allows all writes+commands
+for this session (use with care — applies to all future turns), N denies.
+Grants live only in this process and are never written to disk.
+Commands are NOT sandboxed.
 Configuration: OPENAI_BASE_URL, OPENAI_API_KEY, OPENAI_MODEL; PROXY_HOST fallback.
+  SWORD_PERSONA=izuku  Enable character persona (same as --persona izuku)
 Model choice: --model, else SWORD_MODEL, else the strongest model the backend
 advertises, else backend auto-routing. The backend's balanced routing strategy
 picks much weaker models (flash-lite class), so SwordCLI selects a strong one.
 Default endpoint: http://localhost:3101/v1 (independent sword-server)
 Project content is sent to your chosen provider. Use only trusted workspaces.
 `;
+
 async function main() {
-  // `mcp` subcommand: manage and connect MCP servers without launching the agent
-  // (or the stack). It parses its own argv and returns an exit code, so a pure
-  // `sword mcp ...` never spins up ollama/api/backend/web or needs a TTY.
-  const mcpArgv = process.argv.slice(2);
-  if (mcpArgv[0] === 'mcp') {
-    const code = await runMcpCommand(mcpArgv);
+  // `doctor` and `mcp` subcommands dispatch before parseArgs so they never
+  // require a prompt or spin up the agent.
+  //
+  // `doctor` diagnoses the LOCAL STACK (ports, DB tokens, model catalog) which the
+  // launcher owns, so flow.js forwards to `sword.mjs doctor` — identical behaviour
+  // to `sword doctor` without re-implementing the stack checks in the agent.
+  const argv = process.argv.slice(2);
+  if (argv[0] === 'doctor') {
+    const { spawnSync } = await import('node:child_process');
+    const launcher = join(__dirname, '..', 'sword.mjs');
+    const res = spawnSync(process.execPath, [launcher, 'doctor'], { stdio: 'inherit' });
+    process.exitCode = res.status ?? (res.error ? 1 : 0);
+    return;
+  }
+  // `mcp` manages and connects MCP servers without launching the agent (or the
+  // stack). It parses its own argv and returns an exit code, so a pure `sword mcp ...`
+  // never spins up ollama/api/backend/web or needs a TTY.
+  if (argv[0] === 'mcp') {
+    const code = await runMcpCommand(argv);
     if (code !== 0) process.exitCode = code;
     return;
   }
   const { values } = parseArgs({ options: {
     prompt: { type: 'string', short: 'p' }, cwd: { type: 'string' },
     model: { type: 'string' }, session: { type: 'string' }, mode: { type: 'string', default: 'coding' },
+    persona: { type: 'string' },
     json: { type: 'boolean' }, help: { type: 'boolean', short: 'h' },
     shared: { type: 'boolean' }, local: { type: 'boolean' }, 'shared-session': { type: 'string' }, 'import-session': { type: 'string' },
     team: { type: 'boolean' }, 'team-rounds': { type: 'string', default: '1' }
@@ -193,6 +219,12 @@ async function main() {
   if (values.help) { console.log(HELP); return; }
   if (values.json && !values.prompt) throw new Error('--json requires --prompt');
   if (!['coding', 'marketing-video'].includes(values.mode)) throw new Error(`Unknown mode: ${values.mode}`);
+  // Only `izuku` has a persona prompt; anything else is not silent — warn and fall
+  // back to the neutral default so `--persona turing` can't masquerade as working.
+  if (values.persona && !KNOWN_PERSONAS.includes(values.persona.toLowerCase())) {
+    console.error(`[sword] unknown persona "${values.persona}" — available: ${KNOWN_PERSONAS.join(', ')}. Using the neutral default.`);
+    values.persona = undefined;
+  }
   const interactive = Boolean(process.stdin.isTTY && process.stderr.isTTY);
   if (!values.prompt && !interactive) throw new Error('Non-interactive usage requires --prompt TEXT');
   if (values.prompt !== undefined && !values.prompt.trim()) throw new Error('Prompt must not be empty');
@@ -265,7 +297,7 @@ async function main() {
     detectedTests ? `\n\n${testCommandBlock(detectedTests.raw)}` : '',
     useG4f ? `\n\n${g4fDegradedNotice()}` : '',   // G3: honest about a tool-less provider
   ].join('');
-  const system = { role: 'system', content: buildSystemPrompt(cwd, shared?.mode || values.mode) + systemExtras };
+  const system = { role: 'system', content: buildSystemPrompt(cwd, shared?.mode || values.mode, values.persona || null) + systemExtras };
   const provider = { ...config, model: values.model || shared?.model || selectedModel };
   // ── MCP remote tools (Phase 4) ─────────────────────────────────────────────
   // Load config, connect to each enabled server ONCE to enumerate its tools, and
@@ -632,7 +664,13 @@ async function main() {
         estimated: true,
         durationMs: Date.now() - turnStartedAt,
       }).catch(() => {});
-      if (values.json) { console.log(JSON.stringify({ response: result.text })); }
+      // Count tool messages in this turn's new messages (after inputs) to surface
+      // an accurate `toolsRan` count. Without this, `toolsUsed` only appeared in
+      // the degraded path, leaving the successful path ambiguous — a tool turn and
+      // a chat-only turn looked identical in --json mode.
+      const turnMessages = result.messages.slice(inputs.length);
+      const toolsRan = turnMessages.filter(m => m.role === 'tool').length;
+      if (values.json) { console.log(JSON.stringify({ response: result.text, toolsUsed: toolsRan > 0, toolsRan })); }
       else if (streamed) process.stderr.write('\n');
       else if (interactive) console.log(markdownLite(result.text, true));
       else console.log(safe(result.text));
