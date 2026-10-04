@@ -287,6 +287,12 @@ if (cmd === 'mcp') {
   const { runMcpCommand } = await import('./cli/mcpManage.js');
   process.exit(await runMcpCommand(process.argv.slice(2)));
 }
+if (cmd === 'routine') {
+  // Routine management (add/list/remove/schedule/run) is pure config + headless
+  // turns; it never needs the stack services spinning up.
+  const { runRoutineCommand } = await import('./cli/routines.js');
+  process.exit(await runRoutineCommand(process.argv.slice(2)));
+}
 if (cmd === 'up') {
   const ollama = await ensureOllama().catch(e => `FAILED: ${e.message}`);
   if (ollama === 'started' || ollama === 'already-running') warnMissingOllamaModels();

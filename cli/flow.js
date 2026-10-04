@@ -17,6 +17,7 @@ import { RagEngine } from './brain/rag.js';
 import { sessions } from './skills/sessions.js';
 import { loadMcpConfig } from './mcpConfig.js';
 import { runMcpCommand } from './mcpManage.js';
+import { runRoutineCommand } from './routines.js';
 import { closeMcpClients, collectMcpDefinitions } from './mcp/dispatch.js';
 import { listInstalledSkills } from './skills/store.js';
 import { aggregateVotes, formatTeamSummary, parseTeamRounds, TEAM_ROUNDS_DEFAULT } from './team.js';
@@ -160,9 +161,12 @@ Usage: sword [--cwd DIRECTORY] [--prompt TEXT] [--json] [--session NAME]
 Subcommands:
    sword doctor                      Diagnose provider + tool state; prints exact fix steps
    sword up|down|status|logs         Manage the local backend stack
-   sword mcp <add|remove|list|test|show|help>   Connect to and manage MCP servers
-     (mcp test NAME connects to a server and lists its tools — the same path
-      the agent uses; run it after mcp add to confirm the connection works)
+    sword mcp <add|remove|list|test|show|help>   Connect to and manage MCP servers
+      (mcp test NAME connects to a server and lists its tools — the same path
+       the agent uses; run it after mcp add to confirm the connection works)
+    sword routine <add|list|remove|schedule|run>   Standing tasks: define a prompt,
+      schedule it (hourly/daily/weekdays/weekly/once/cron), run it headless, and
+      keep a per-run record in .flow/routines/ (read-only by default, safe to schedule)
 Power tools available to the model (use naturally in your prompts):
    apply_patch    Apply a unified diff atomically across multiple files (one approval step)
    task           Spawn a parallel read-only sub-agent to investigate a question
@@ -205,6 +209,14 @@ async function main() {
   // never spins up ollama/api/backend/web or needs a TTY.
   if (argv[0] === 'mcp') {
     const code = await runMcpCommand(argv);
+    if (code !== 0) process.exitCode = code;
+    return;
+  }
+  // `routine` manages standing, scheduled tasks (definitions, scheduling, and
+  // headless runs). Pure management subcommands need no TTY; `run` is a
+  // headless, read-only one-shot turn.
+  if (argv[0] === 'routine') {
+    const code = await runRoutineCommand(argv);
     if (code !== 0) process.exitCode = code;
     return;
   }
