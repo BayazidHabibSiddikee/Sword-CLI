@@ -17,7 +17,7 @@ const PDF_LIMIT = 32 * 1024 * 1024;
 // results cost quadratically over the rest of the run. Cap in characters, and keep
 // head+tail because build/test failures live at the end.
 const TOOL_OUTPUT_CHARS = 48000;
-const MUTATING_TOOLS = new Set(['write_file', 'edit_file', 'run_command', 'save_to_rag']);
+const MUTATING_TOOLS = new Set(['write_file', 'edit_file', 'apply_patch', 'run_command', 'save_to_rag']);
 const blocked = name => name.startsWith('.') || ['node_modules', 'dist', 'build'].includes(name) || /\.(pem|key|db)$/i.test(name);
 const string = { type: 'string' };
 const definition = (name, description, properties, required = []) => ({ type: 'function', function: {
@@ -31,9 +31,10 @@ export function sandboxMode({ env = process.env } = {}) {
 export const toolDefinitions = [
   definition('list_files', 'List project files; skips hidden/build/dependency directories.', { path: string }),
   definition('read_file', 'Read a text file before editing. Omit offset/limit to read the whole file (bounded to 64 KB); use offset/limit to page through anything larger.', { path: string, offset: { type: 'integer' }, limit: { type: 'integer' } }, ['path']),
-  definition('search_files', 'Search literal text across project files.', { query: string }, ['query']),
+  definition('search_files', 'Search across project files. Default is a literal, case-sensitive substring; set regex to treat the query as a regular expression, or case_insensitive to ignore case. Uses ripgrep when available for speed, else a bounded built-in engine.', { query: string, regex: { type: 'boolean' }, case_insensitive: { type: 'boolean' } }, ['query']),
   definition('write_file', 'Create or overwrite text with approval; read existing files first.', { path: string, content: string }, ['path', 'content']),
   definition('edit_file', 'Replace exactly one occurrence in a previously read file with approval.', { path: string, old_text: string, new_text: string }, ['path', 'old_text', 'new_text']),
+  definition('apply_patch', 'Apply a unified diff (git diff / diff -u) to one or more files atomically: create, modify, or delete. One approval and one checkpoint cover the whole patch. Pass the full patch text in "patch": each file section starts with "--- a/<path>" then "+++ b/<path>" (use "/dev/null" for the side that does not exist), hunks begin with "@@" and context/added/removed lines are prefixed with " ", "+", "-".', { patch: string }, ['patch']),
   definition('run_command', 'Run executable and arguments with approval. No shell parsing; sandbox mode is declared on every result (see `sandbox`).', { command: string, args: { type: 'array', items: string } }, ['command', 'args']),
   definition('save_to_rag', 'Save a durable note to this project\'s memory so later sessions can retrieve it. Requires approval.', { category: string, title: string, content: string }, ['category', 'title', 'content']),
   definition('read_pdf', 'Extract bounded text from a PDF inside the project before summarizing it.', { path: string, max_pages: { type: 'integer' } }, ['path']),
@@ -249,6 +250,48 @@ export function createTools({ cwd, approve = async () => false, signal, timeout 
     }
   }
 
+  async function applyPatch(args) {
+    const patch = text(args.patch, 'patch');
+    const ops = parseUnifiedPatch(patch);
+    if (!ops.length) throw new Error('apply_patch: no file sections found in patch (expected "--- a/path" / "+++ b/path" with "@@" hunks)');
+    const relPaths = [...new Set(ops.map(o => o.path))];
+    // Read every referenced file up front — the "read before you write" evidence.
+    const present = new Map();
+    for (const rel of relPaths) {
+      const full = await checked(text(rel, 'path'), true);
+      try { present.set(rel, await read(full)); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    }
+    // Pure validation + in-memory application: a bad context throws BEFORE any
+    // byte is written, so a patch is all-or-nothing.
+    const plan = applyUnifiedPatch(present, ops);
+    const detail = plan.map(p => `${p.kind}:${p.path}`).join(', ');
+    await permit({ tool: 'apply_patch', patch, paths: plan.map(p => p.path), detail });
+    for (const item of plan) {
+      const full = await checked(text(item.path, 'path'), true);
+      if (item.kind === 'delete') {
+        await rm(full);
+        continue;
+      }
+      const target = item.after ?? '';
+      await mkdir(dirname(full), { recursive: true });
+      if (item.kind === 'create') {
+        // 'wx' makes a create fail if the path appeared since we read.
+        await writeFile(full, target, { flag: 'wx' });
+      } else {
+        const temp = `${full}.flow-${process.pid}-${Date.now().toString(36)}.tmp`;
+        try { await writeFile(temp, target, { flag: 'wx' }); await rename(temp, full); }
+        catch (error) { await rm(temp, { force: true }).catch(() => {}); throw error; }
+      }
+      if (item.kind !== 'delete') present.set(item.path, item.after ?? '');
+    }
+    // Record snapshots so a later edit_file on a touched file stays consistent.
+    for (const item of plan) if (item.kind !== 'delete') {
+      const full = await checked(item.path, true);
+      snapshots = new Map([...snapshots, [full, item.after ?? '']]);
+    }
+    return { applied: plan.map(p => ({ path: p.path, kind: p.kind })), files: plan.length, checkpoint: Boolean(turnSnapshot) };
+  }
+
   const run = async (name, input) => {
     signal?.throwIfAborted();
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid tool arguments');
@@ -276,17 +319,26 @@ export function createTools({ cwd, approve = async () => false, signal, timeout 
     }
     if (name === 'search_files') {
       const query = text(args.query, 'query');
-      let matches = [];
-      for (const file of await files()) {
-        if (matches.length >= 100) break;
-        let content;
-        try { content = await read(await checked(file)); } catch { continue; }
-        const found = content.split('\n').flatMap((line, i) => line.includes(query) ? [{ path: file, line: i + 1, text: line.slice(0, 300) }] : []);
-        matches = [...matches, ...found].slice(0, 100);
+      const regex = args.regex === true;
+      const caseInsensitive = args.case_insensitive === true;
+      const cap = 200;
+      const opts = { regex, caseInsensitive, cap, signal };
+      // Fast path: shell to ripgrep when it resolves and the user hasn't opted
+      // out. A rg failure (missing binary, non-zero) falls back to the builtin
+      // engine so a search never hard-fails on the wrapper's availability.
+      const rgBin = resolveCommandPath('rg', root);
+      if (rgBin && process.env.SWORDCLI_SEARCH_NO_RG !== '1') {
+        try {
+          return { matches: await searchWithRg(rgBin, root, query, opts), limit: cap, engine: 'ripgrep' };
+        } catch (error) {
+          if (!error?.fallback) throw error;
+        }
       }
-      return { matches, limit: 100 };
+      const matches = await nodeSearch({ files: await files(), read, checked, query, regex, caseInsensitive, cap });
+      return { matches, limit: cap, engine: 'builtin' };
     }
     if (name === 'write_file' || name === 'edit_file') return change(name, args);
+    if (name === 'apply_patch') return applyPatch(args);
     if (name === 'run_command') {
       text(args.command, 'command');
       if (!Array.isArray(args.args) || args.args.length > 100) throw new Error('Invalid command args');
@@ -482,4 +534,153 @@ function commandRaw(wrapped, cwd, signal, timeout) {
       resolveResult({ stdout, stderr, exitCode, signal: terminationSignal, timedOut, truncated });
     });
   });
+}
+
+// ── search_files engines ──────────────────────────────────────────────────────
+
+/** Bounded built-in search engine: respects the project's file list, supports
+ * literal/regex and case options, and never loads a file it cannot read. */
+export async function nodeSearch({ files, read, checked, query, regex = false, caseInsensitive = false, cap = 200 }) {
+  const re = regex ? new RegExp(query, caseInsensitive ? 'i' : '') : null;
+  const needle = caseInsensitive ? String(query).toLowerCase() : String(query);
+  const matches = [];
+  for (const file of files) {
+    if (matches.length >= cap) break;
+    let content;
+    try { content = await read(await checked(file)); } catch { continue; }
+    const lines = content.split('\n');
+    for (let i = 0; i < lines.length && matches.length < cap; i++) {
+      const line = lines[i];
+      const hit = re ? re.test(line) : (caseInsensitive ? line.toLowerCase().includes(needle) : line.includes(needle));
+      if (hit) matches.push({ path: file, line: i + 1, text: line.slice(0, 300) });
+    }
+  }
+  return matches;
+}
+
+/** Fast path: run ripgrep and parse `path:line:text` output. Read-only and
+ * bounded; a missing binary or hard error throws { fallback: true } so callers
+ * can fall back to nodeSearch instead of failing the whole search. */
+export async function searchWithRg(rgBin, cwd, query, { regex = false, caseInsensitive = false, cap = 200, signal = null, timeout = 30000 } = {}) {
+  const args = ['-n', '--no-heading', '--color', 'never', '-e', String(query)];
+  if (caseInsensitive) args.push('-i');
+  if (!regex) args.push('-F');
+  const result = await commandRaw({ command: rgBin, args }, cwd, signal, timeout);
+  // rg: 0 = matches, 1 = no matches, >=2 = error. Only 0/1 are usable.
+  if (result.timedOut || result.exitCode === null || result.exitCode >= 2) {
+    const error = new Error(`ripgrep exited ${result.exitCode}: ${(result.stderr || '').slice(0, 200)}`);
+    error.fallback = true;
+    throw error;
+  }
+  const matches = [];
+  for (const rawLine of String(result.stdout).split('\n')) {
+    if (!rawLine) continue;
+    const i1 = rawLine.indexOf(':');
+    if (i1 < 0) continue;
+    const rest = rawLine.slice(i1 + 1);
+    const i2 = rest.indexOf(':');
+    if (i2 < 0) continue;
+    const num = Number(rest.slice(0, i2));
+    if (!Number.isFinite(num) || num < 1) continue;
+    matches.push({ path: rawLine.slice(0, i1), line: num, text: rest.slice(i2 + 1).slice(0, 300) });
+    if (matches.length >= cap) break;
+  }
+  return matches;
+}
+
+// ── apply_patch: unified-diff parsing + in-memory application ─────────────────
+
+/** Strip the git `a/`/`b/` side prefix and a trailing tab+timestamp from a
+ * `---`/`+++` header value, leaving the plain project-relative path. */
+function stripPatchPath(value) {
+  let p = value.split(/\t/)[0].trim();
+  if (p.startsWith('a/')) p = p.slice(2);
+  else if (p.startsWith('b/')) p = p.slice(2);
+  return p;
+}
+
+/**
+ * Parse a unified diff (git diff / diff -u) into one record per file.
+ * Tolerates the `diff --git`/`new file mode`/`index` metadata lines and a
+ * `/dev/null` on either side (create / delete). Each hunk is reduced to an
+ * ordered `pre` (context + removed lines) and `post` (context + added lines)
+ * image so application is a single, checkable splice.
+ */
+export function parseUnifiedPatch(patchText) {
+  const lines = String(patchText ?? '').split('\n');
+  const files = [];
+  let i = 0;
+  const sectionStart = s => s.startsWith('--- ') || s.startsWith('+++ ') || s.startsWith('diff --git');
+  while (i < lines.length) {
+    while (i < lines.length && !lines[i].startsWith('--- ')) i++; // skip `diff --git`, mode, index
+    if (i >= lines.length) break;
+    const minusRaw = lines[i].slice(4).trim(); i++;
+    const plusRaw = lines[i]?.startsWith('+++ ') ? lines[i].slice(4).trim() : ''; i++;
+    const isCreate = minusRaw === '' || minusRaw === '/dev/null';
+    const isDelete = plusRaw === '/dev/null';
+    const path = (isDelete ? stripPatchPath(minusRaw) : stripPatchPath(plusRaw)) || stripPatchPath(minusRaw) || stripPatchPath(plusRaw);
+    if (!path) { i = 0; continue; }
+    const hunks = [];
+    while (i < lines.length && lines[i].startsWith('@@')) {
+      i++; // consume the @@ ... @@ header
+      const pre = [], post = [];
+      while (i < lines.length && !sectionStart(lines[i])) {
+        const line = lines[i];
+        const marker = line[0];
+        if (marker === '+') post.push(line.slice(1));
+        else if (marker === '-') pre.push(line.slice(1));
+        else if (marker === ' ') { pre.push(line.slice(1)); post.push(line.slice(1)); }
+        else if (marker === '\\') { /* "\ No newline at end of file" — no content */ }
+        i++;
+      }
+      if (pre.length || post.length) hunks.push({ pre, post });
+    }
+    files.push({ path, isCreate, isDelete, hunks });
+  }
+  return files;
+}
+
+/** Exact-match splice: find `pre` starting at/after `from`, else -1. */
+function findPreImage(lines, pre, from) {
+  if (pre.length === 0) return from <= lines.length ? from : -1;
+  for (let j = Math.max(0, from); j + pre.length <= lines.length; j++) {
+    let ok = true;
+    for (let k = 0; k < pre.length; k++) if (lines[j + k] !== pre[k]) { ok = false; break; }
+    if (ok) return j;
+  }
+  return -1;
+}
+
+/**
+ * Apply parsed file ops to a Map of present contents (relPath -> string).
+ * PURE: reads the map, never writes; throws on the first unmatchable hunk so a
+ * patch applies atomically (all-or-nothing). Returns an ordered plan of
+ * { path, kind: 'create'|'modify'|'delete', before, after }.
+ */
+export function applyUnifiedPatch(currentByPath, files) {
+  const plan = [];
+  for (const f of files) {
+    const present = currentByPath.get(f.path);
+    if (f.isCreate && present !== undefined) throw new Error(`apply_patch: ${f.path} already exists — use a modify section, not a create`);
+    if (!f.isCreate && present === undefined) throw new Error(`apply_patch: ${f.path} not found${f.isDelete ? ' (a delete needs the file)' : ''}`);
+    const base = f.isCreate ? '' : present;
+    let lines = base === '' ? [] : base.split('\n');
+    const hadTrailing = base !== '' && base.endsWith('\n');
+    if (hadTrailing && lines[lines.length - 1] === '') lines = lines.slice(0, -1);
+    let cursor = 0;
+    for (const hunk of f.hunks) {
+      const start = findPreImage(lines, hunk.pre, cursor);
+      if (start < 0) throw new Error(`apply_patch: hunk context not found in ${f.path} (expected ${hunk.pre.length} pre-image line(s)); re-read the file and retry`);
+      lines = lines.slice(0, start).concat(hunk.post, lines.slice(start + hunk.pre.length));
+      cursor = start + hunk.post.length;
+    }
+    let after = lines.join('\n');
+    // A created file (no `\ No newline` marker) ends with a newline by convention;
+    // a modified file keeps the trailing state of its base.
+    if (after !== '' && (f.isCreate || hadTrailing) && !after.endsWith('\n')) after += '\n';
+    plan.push(f.isDelete
+      ? { path: f.path, kind: 'delete', before: present, after: null }
+      : { path: f.path, kind: f.isCreate ? 'create' : 'modify', before: f.isCreate ? null : present, after });
+  }
+  return plan;
 }

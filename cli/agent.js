@@ -126,7 +126,7 @@ export async function runTurn({ messages, request, execute, maxSteps = 20, onEve
   let mistakes = 0;
   // Read-only detection mirrors the safety gate: anything that can mutate the
   // tree or the knowledge base breaks the parallel run; only write/edit batches.
-  const MUTATING = new Set(['write_file', 'edit_file', 'run_command', 'save_to_rag']);
+  const MUTATING = new Set(['write_file', 'edit_file', 'apply_patch', 'run_command', 'save_to_rag']);
   const BATCHABLE = new Set(['write_file', 'edit_file']);
   // Phase 4: MCP tools are arbitrary remote code — every call needs its own
   // explicit grant (permit gate in dispatch.js), so none are batchable. Reads
