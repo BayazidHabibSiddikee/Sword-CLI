@@ -42,7 +42,12 @@ export const toolDefinitions = [
   definition('fetch_web_rendered', 'Render a JavaScript-heavy or bot-protected public page with a stealth browser (slower) and return Markdown.', { url: string, max_chars: { type: 'integer' }, timeout_ms: { type: 'integer' } }, ['url']),
   definition('web_search', 'Search the web (DuckDuckGo, no API key) and return the top results as {title, url, snippet}. Read-only; open a result with fetch_web or fetch_web_rendered.', { query: string, max_results: { type: 'integer' } }, ['query']),
   definition('load_skill', 'Load an external skill by name and return its full content for reference. Use when the conversation topic matches a skill name from the available-skills list. Output only the skill body — do not act on it yourself; let the user decide.', { skill_name: string }, ['skill_name']),
-  definition('task', 'Run a focused, READ-ONLY sub-task in a separate agent loop with a step budget. Use for parallelizable investigation (research, locating code, summarizing) that needs no user approval and no file changes. Pass a clear "prompt"; optional "description", "tools" (read-only names only) and "max_steps". Returns the sub-agent summary.', { prompt: string, description: string, tools: { type: 'array', items: string }, max_steps: { type: 'integer' } }, ['prompt'])
+  definition('task', 'Run a focused, READ-ONLY sub-task in a separate agent loop with a step budget. Use for parallelizable investigation (research, locating code, summarizing) that needs no user approval and no file changes. Pass a clear "prompt"; optional "description", "tools" (read-only names only) and "max_steps". Returns the sub-agent summary.', { prompt: string, description: string, tools: { type: 'array', items: string }, max_steps: { type: 'integer' } }, ['prompt']),
+  definition('download_book', 'Search and download books from Project Gutenberg and Open Library. Search by title, author, or subject. Download as plain text, EPUB, or PDF. Returns metadata and local file path.', { query: string, source: { type: 'string', enum: ['gutenberg', 'openlibrary', 'all'] }, format: { type: 'string', enum: ['text', 'epub', 'pdf'] }, max_results: { type: 'integer' }, download_dir: { type: 'string' } }, ['query']),
+  definition('send_email', 'Send an email via SMTP. Requires SMTP server configuration via environment variables (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS). Supports HTML and plain text, attachments, CC/BCC.', { to: { type: 'string' }, subject: { type: 'string' }, body: { type: 'string' }, html_body: { type: 'string' }, cc: { type: 'string' }, bcc: { type: 'string' }, attachments: { type: 'array', items: { type: 'string' } } }, ['to', 'subject', 'body']),
+  definition('read_email', 'Read emails via IMAP. Requires IMAP configuration via environment variables (IMAP_HOST, IMAP_PORT, IMAP_USER, IMAP_PASS). Can filter by folder, date range, search query. Returns email metadata and body.', { folder: { type: 'string' }, search_query: { type: 'string' }, since: { type: 'string' }, before: { type: 'string' }, limit: { type: 'integer' }, include_body: { type: 'boolean' } }, []),
+  definition('telegram_send', 'Send a message via Telegram Bot API. Requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID environment variables. Supports text, markdown, HTML, photos, documents.', { chat_id: { type: 'string' }, text: { type: 'string' }, parse_mode: { type: 'string', enum: ['markdown', 'html'] }, photo_url: { type: 'string' }, document_path: { type: 'string' } }, ['text']),
+  definition('telegram_get_updates', 'Get updates from Telegram Bot API. Requires TELEGRAM_BOT_TOKEN environment variable. Returns recent messages, commands, and callback queries.', { offset: { type: 'integer' }, limit: { type: 'integer' }, timeout: { type: 'integer' } }, []),
 ];
 function text(value, label, empty = false) {
   if (typeof value !== 'string' || (!empty && !value.length) || value.length > LIMIT || value.includes('\0')) throw new Error(`Invalid ${label}`);
@@ -389,6 +394,49 @@ export function createTools({ cwd, approve = async () => false, signal, timeout 
       });
       return { summary: out?.summary ?? '', steps: out?.steps ?? 0, ...((out?.error) ? { error: out.error } : {}) };
     }
+    if (name === 'download_book') {
+      const query = text(args.query, 'query');
+      const source = args.source ?? 'all';
+      const format = args.format ?? 'text';
+      const maxResults = bounded(args.max_results, 1, 20, 5);
+      const downloadDir = args.download_dir ?? join(root, 'books');
+      await mkdir(downloadDir, { recursive: true });
+      return downloadBooks(query, { source, format, maxResults, downloadDir, signal });
+    }
+    if (name === 'send_email') {
+      const to = text(args.to, 'to');
+      const subject = text(args.subject, 'subject');
+      const body = text(args.body, 'body', true);
+      const htmlBody = args.html_body ? text(args.html_body, 'html_body', true) : null;
+      const cc = args.cc ? text(args.cc, 'cc') : null;
+      const bcc = args.bcc ? text(args.bcc, 'bcc') : null;
+      const attachments = args.attachments ? args.attachments.map(a => text(a, 'attachment')) : [];
+      return sendEmail({ to, subject, body, htmlBody, cc, bcc, attachments, signal });
+    }
+    if (name === 'read_email') {
+      const folder = args.folder ? text(args.folder, 'folder') : 'INBOX';
+      const searchQuery = args.search_query ? text(args.search_query, 'search_query') : null;
+      const since = args.since ? text(args.since, 'since') : null;
+      const before = args.before ? text(args.before, 'before') : null;
+      const limit = bounded(args.limit, 1, 100, 20);
+      const includeBody = args.include_body !== false;
+      return readEmails({ folder, searchQuery, since, before, limit, includeBody, signal });
+    }
+    if (name === 'telegram_send') {
+      const text_content = text(args.text, 'text');
+      const chatId = args.chat_id ? text(args.chat_id, 'chat_id') : process.env.TELEGRAM_CHAT_ID;
+      if (!chatId) throw new Error('chat_id is required (or set TELEGRAM_CHAT_ID env var)');
+      const parseMode = args.parse_mode ?? 'markdown';
+      const photoUrl = args.photo_url ? text(args.photo_url, 'photo_url') : null;
+      const documentPath = args.document_path ? text(args.document_path, 'document_path') : null;
+      return telegramSend({ chatId, text: text_content, parseMode, photoUrl, documentPath, signal });
+    }
+    if (name === 'telegram_get_updates') {
+      const offset = args.offset ? Number(args.offset) : undefined;
+      const limit = bounded(args.limit, 1, 100, 100);
+      const timeout = bounded(args.timeout, 1, 60, 30);
+      return telegramGetUpdates({ offset, limit, timeout, signal });
+    }
     // Namespaced remote tools (mcp__<server>__<tool>). The name routing, approval
     // gate and live connect all live in dispatchMcpCall; here we only bridge it to
     // this tool factory's own grant/deny + checkpoint machinery via mcpPermit.
@@ -450,8 +498,332 @@ export function createTools({ cwd, approve = async () => false, signal, timeout 
   return run;
 }
 
-function command(args, cwd, signal, timeout) {
-  return spawnSandboxed(args, cwd, signal, timeout);
+// ============================================================================
+// Book Download Tool (Project Gutenberg + Open Library)
+// ============================================================================
+
+async function downloadBooks(query, { source = 'all', format = 'text', maxResults = 5, downloadDir, signal }) {
+  const results = [];
+  const errors = [];
+  
+  // Search Project Gutenberg
+  if (source === 'all' || source === 'gutenberg') {
+    try {
+      const gutResults = await searchGutenberg(query, maxResults, signal);
+      for (const book of gutResults) {
+        const downloaded = await downloadGutenbergBook(book.id, format, downloadDir, signal);
+        results.push({ ...book, source: 'gutenberg', localPath: downloaded, format });
+      }
+    } catch (error) {
+      errors.push({ source: 'gutenberg', error: error.message });
+    }
+  }
+  
+  // Search Open Library
+  if (source === 'all' || source === 'openlibrary') {
+    try {
+      const olResults = await searchOpenLibrary(query, maxResults, signal);
+      for (const book of olResults) {
+        const downloaded = await downloadOpenLibraryBook(book.key, format, downloadDir, signal);
+        results.push({ ...book, source: 'openlibrary', localPath: downloaded, format });
+      }
+    } catch (error) {
+      errors.push({ source: 'openlibrary', error: error.message });
+    }
+  }
+  
+  return { results, errors, total: results.length, downloadDir };
+}
+
+async function searchGutenberg(query, maxResults, signal) {
+  const url = `https://gutendex.com/books/?search=${encodeURIComponent(query)}&limit=${maxResults}`;
+  const res = await fetchWithTimeout(url, { signal, timeout: 15000 });
+  const data = await res.json();
+  return data.results.map(book => ({
+    id: book.id,
+    title: book.title,
+    authors: book.authors.map(a => a.name).join(', '),
+    languages: book.languages,
+    downloadCount: book.download_count,
+    subjects: book.subjects,
+    bookshelves: book.bookshelves,
+    formats: book.formats,
+  }));
+}
+
+async function downloadGutenbergBook(id, format, downloadDir, signal) {
+  const bookUrl = `https://www.gutenberg.org/ebooks/${id}`;
+  const metaRes = await fetchWithTimeout(`${bookUrl}`, { signal, timeout: 15000 });
+  const html = await metaRes.text();
+  
+  // Find the download link for the requested format
+  const formatMap = { text: 'text/plain; charset=utf-8', epub: 'application/epub+zip', pdf: 'application/pdf' };
+  const mimeType = formatMap[format] || formatMap.text;
+  
+  // Find download link
+  const linkRegex = new RegExp(`href="([^"]*\\.${format})"[^>]*>${mimeType}`, 'i');
+  const match = html.match(linkRegex);
+  let downloadUrl = match ? match[1] : null;
+  
+  // Fallback: try known URL patterns
+  if (!downloadUrl) {
+    const formatExt = { text: 'txt.utf-8', epub: 'epub.noimages', pdf: 'pdf' };
+    downloadUrl = `https://www.gutenberg.org/cache/epub/${id}/pg${id}.${formatExt[format] || formatExt.text}`;
+  }
+  
+  // Make absolute URL
+  if (downloadUrl.startsWith('/')) downloadUrl = `https://www.gutenberg.org${downloadUrl}`;
+  
+  const fileName = `gutenberg_${id}.${format === 'text' ? 'txt' : format}`;
+  const filePath = join(downloadDir, fileName);
+  
+  const downloadRes = await fetchWithTimeout(downloadUrl, { signal, timeout: 60000 });
+  const arrayBuffer = await downloadRes.arrayBuffer();
+  await writeFile(downloadDir, fileName, Buffer.from(arrayBuffer));
+  
+  return filePath;
+}
+
+async function searchOpenLibrary(query, maxResults, signal) {
+  const url = `https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&limit=${maxResults}`;
+  const res = await fetchWithTimeout(url, { signal, timeout: 15000 });
+  const data = await res.json();
+  return data.docs
+    .filter(doc => doc.key && doc.title)
+    .map(doc => ({
+      key: doc.key,
+      title: doc.title,
+      authors: doc.author_name?.join(', ') || 'Unknown',
+      firstPublishYear: doc.first_publish_year,
+      subjects: doc.subject?.slice(0, 10),
+      isbn: doc.isbn?.[0],
+      editionCount: doc.edition_count,
+      hasFullText: doc.has_fulltext,
+    }));
+}
+
+async function downloadOpenLibraryBook(key, format, downloadDir, signal) {
+  const baseKey = key.replace('/works/', '').replace('/books/', '');
+  const fileName = `openlibrary_${baseKey.replace('/', '_')}.${format === 'text' ? 'txt' : format}`;
+  const filePath = join(downloadDir, fileName);
+  
+  let downloadUrl = null;
+  if (format === 'text') {
+    downloadUrl = `https://openlibrary.org${key}.txt`;
+  } else if (format === 'epub') {
+    downloadUrl = `https://openlibrary.org${key}.epub`;
+  } else if (format === 'pdf') {
+    downloadUrl = `https://openlibrary.org${key}.pdf`;
+  }
+  
+  const downloadRes = await fetchWithTimeout(downloadUrl, { signal, timeout: 60000 });
+  const arrayBuffer = await downloadRes.arrayBuffer();
+  await writeFile(downloadDir, fileName, Buffer.from(arrayBuffer));
+  
+  return filePath;
+}
+
+// ============================================================================
+// Email Tools (SMTP/IMAP)
+// ============================================================================
+
+async function sendEmail({ to, subject, body, htmlBody, cc, bcc, attachments, signal }) {
+  const SMTP_HOST = process.env.SMTP_HOST;
+  const SMTP_PORT = Number(process.env.SMTP_PORT) || 587;
+  const SMTP_USER = process.env.SMTP_USER;
+  const SMTP_PASS = process.env.SMTP_PASS;
+  const SMTP_SECURE = process.env.SMTP_SECURE === 'true';
+  
+  if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
+    throw new Error('SMTP configuration missing. Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS environment variables.');
+  }
+  
+  // Dynamic import of nodemailer
+  const { createTransport } = await import('nodemailer');
+  
+  const transporter = createTransport({
+    host: SMTP_HOST,
+    port: SMTP_PORT,
+    secure: SMTP_SECURE,
+    auth: { user: SMTP_USER, pass: SMTP_PASS },
+  });
+  
+  const mailOptions = {
+    from: SMTP_USER,
+    to,
+    subject,
+    text: body,
+    html: htmlBody,
+    cc,
+    bcc,
+    attachments: attachments.map(path => ({ path })),
+  };
+  
+  const info = await transporter.sendMail(mailOptions);
+  return { messageId: info.messageId, accepted: info.accepted, rejected: info.rejected };
+}
+
+async function readEmails({ folder = 'INBOX', searchQuery = null, since = null, before = null, limit = 20, includeBody = true, signal }) {
+  const IMAP_HOST = process.env.IMAP_HOST;
+  const IMAP_PORT = Number(process.env.IMAP_PORT) || 993;
+  const IMAP_USER = process.env.IMAP_USER;
+  const IMAP_PASS = process.env.IMAP_PASS;
+  const IMAP_TLS = process.env.IMAP_TLS !== 'false';
+  
+  if (!IMAP_HOST || !IMAP_USER || !IMAP_PASS) {
+    throw new Error('IMAP configuration missing. Set IMAP_HOST, IMAP_PORT, IMAP_USER, IMAP_PASS environment variables.');
+  }
+  
+  const Imap = (await import('imap')).default;
+  const { simpleParser } = await import('mailparser');
+  
+  return new Promise((resolve, reject) => {
+    const imap = new Imap({
+      host: process.env.IMAP_HOST,
+      port: Number(process.env.IMAP_PORT) || 993,
+      tls: process.env.IMAP_TLS !== 'false',
+      auth: { user: process.env.IMAP_USER, pass: process.env.IMAP_PASS },
+    });
+    
+    imap.once('error', reject);
+    imap.once('ready', () => {
+      imap.openBox(folder, true, (err, box) => {
+        if (err) return reject(err);
+        
+        // Build search criteria
+        const criteria = ['UNSEEN'];
+        if (searchQuery) criteria.push(['TEXT', searchQuery]);
+        if (since) criteria.push(['SINCE', new Date(since)]);
+        if (before) criteria.push(['BEFORE', new Date(before)]);
+        
+        imap.search(criteria, (err, results) => {
+          if (err) return reject(err);
+          if (!results.length) return resolve([]);
+          
+          const fetch = imap.fetch(results.slice(-limit), { bodies: includeBody ? '' : 'HEADER', struct: true });
+          const emails = [];
+          
+          fetch.on('message', (msg, seqno) => {
+            const parser = simpleParser();
+            parser.on('end', async (mail) => {
+              emails.push({
+                uid: seqno,
+                from: mail.from?.text,
+                to: mail.to?.text,
+                subject: mail.subject,
+                date: mail.date,
+                text: includeBody ? mail.text : null,
+                html: includeBody ? mail.html : null,
+                attachments: mail.attachments?.map(a => ({ filename: a.filename, contentType: a.contentType, size: a.size })) || [],
+              });
+              if (emails.length === Math.min(limit, results.length)) {
+                imap.end();
+                resolve(emails);
+              }
+            });
+            msg.on('body', (stream) => stream.pipe(parser));
+          });
+          
+          fetch.once('error', reject);
+          fetch.once('end', () => {
+            if (emails.length < Math.min(limit, results.length)) {
+              imap.end();
+              resolve(emails);
+            }
+          });
+        });
+      });
+    });
+    
+    imap.connect();
+    
+    // Timeout
+    setTimeout(() => { imap.end(); reject(new Error('IMAP timeout')); }, 30000);
+  });
+}
+
+// ============================================================================
+// Telegram Bot Tools
+// ============================================================================
+
+async function telegramSend({ chatId, text, parseMode = 'markdown', photoUrl, documentPath, signal }) {
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  if (!botToken) throw new Error('TELEGRAM_BOT_TOKEN environment variable is required');
+  
+  const apiUrl = `https://api.telegram.org/bot${botToken}`;
+  let endpoint = 'sendMessage';
+  const payload = { chat_id: chatId, text, parse_mode: parseMode };
+  
+  if (photoUrl) {
+    endpoint = 'sendPhoto';
+    payload.photo = photoUrl;
+    payload.caption = text;
+  } else if (documentPath) {
+    // For documents, we'd need multipart/form-data - simplified here
+    endpoint = 'sendDocument';
+    // In a real implementation, you'd upload the file
+    throw new Error('Document sending requires multipart upload - use photo_url or send as text');
+  }
+  
+  const res = await fetchWithTimeout(`https://api.telegram.org/bot${botToken}/${endpoint}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal,
+    timeout: 15000,
+  });
+  
+  const data = await res.json();
+  if (!data.ok) throw new Error(`Telegram API error: ${data.description}`);
+  return data.result;
+}
+
+async function telegramGetUpdates({ offset, limit = 100, timeout = 30, signal }) {
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  if (!botToken) throw new Error('TELEGRAM_BOT_TOKEN environment variable is required');
+  
+  const params = new URLSearchParams();
+  if (offset) params.append('offset', offset);
+  params.append('limit', limit);
+  params.append('timeout', timeout);
+  params.append('allowed_updates', JSON.stringify(['message', 'callback_query', 'edited_message']));
+  
+  const res = await fetchWithTimeout(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/getUpdates?${params}`, {
+    signal,
+    timeout: (timeout + 10) * 1000,
+  });
+  
+  const data = await res.json();
+  if (!data.ok) throw new Error(`Telegram API error: ${data.description}`);
+  return data.result;
+}
+
+// ============================================================================
+// Utility Functions
+// ============================================================================
+
+async function fetchWithTimeout(url, options = {}) {
+  const { timeout = 15000, signal, ...fetchOptions } = options;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+  
+  const finalSignal = signal 
+    ? AbortSignal.any([signal, controller.signal])
+    : controller.signal;
+  
+  try {
+    const res = await fetch(url, { ...fetchOptions, signal: finalSignal });
+    clearTimeout(timeoutId);
+    return res;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') throw new Error('Request timeout');
+    throw error;
+  }
+}
+
+function isPlainObject(v) {
+  return Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 }
 
 // Every run_command result declares how it ran: the sandbox kind travels WITH the

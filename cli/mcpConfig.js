@@ -34,7 +34,8 @@ export const REDACTED = '***redacted***';
 export const BUILTIN_TOOL_NAMES = Object.freeze([
   'list_files', 'read_file', 'search_files', 'write_file', 'edit_file',
   'apply_patch', 'run_command', 'save_to_rag', 'read_pdf', 'fetch_web',
-  'fetch_web_rendered', 'web_search', 'load_skill', 'task'
+  'fetch_web_rendered', 'web_search', 'load_skill', 'task',
+  'download_book', 'send_email', 'read_email', 'telegram_send', 'telegram_get_updates'
 ]);
 
 // Key names whose values are credentials. Matched case-insensitively, and also

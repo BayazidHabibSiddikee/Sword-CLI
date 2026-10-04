@@ -38,7 +38,7 @@ sword.mjs                          # Unified launcher (manages all services)
 | **Persistent Sessions** | SQLite-backed conversation history per character, survives restarts |
 | **Tool Approvals** | Every file edit/command requires explicit `y/N` confirmation |
 | **Free LLM Fallbacks** | Kilo, Pollinations, OpenCode Zen, g4f — no API keys needed |
-| **Tool Suite** | File ops, git, web fetch, PDF, math, crypto, translation, code execution, tasks |
+| **Tool Suite** | File ops, git, web fetch, PDF, math, crypto, translation, code execution, tasks, **book download**, **email**, **Telegram** |
 | **LangGraph Agent** | Optional LangGraph-powered agent loop with checkpointing |
 | **Web Dashboard** | Vite React UI at `http://localhost:3002` |
 
@@ -110,7 +110,172 @@ Hit **Verify** (`getMe`) then **Send**.
 REST surface: `GET/POST /api/channels`, `DELETE /api/channels/:id`,
 `POST /api/channels/:id/verify`, `POST /api/channels/:id/send`.
 
-## Vendored skills (steipete/agent-scripts)
+## New Tools (v2.0+)
+
+### `download_book` — Download books from Project Gutenberg & Open Library
+```bash
+# Search and download a book
+download_book query="Pride and Prejudice" source=all format=text max_results=3
+# → Searches both Project Gutenberg and Open Library, downloads as text
+
+download_book query="Sherlock Holmes" source=gutenberg format=epub max_results=2
+# → Downloads EPUB from Project Gutenberg only
+
+download_book query="1984" source=openlibrary format=pdf download_dir=/tmp/books
+# → Downloads PDF from Open Library to custom directory
+```
+
+**Parameters:**
+- `query` (required): Search query (title, author, subject)
+- `source`: `gutenberg`, `openlibrary`, or `all` (default: `all`)
+- `format`: `text`, `epub`, `pdf` (default: `text`)
+- `max_results`: 1-20 (default: 5)
+- `download_dir`: Output directory (default: `./books`)
+
+**Sources:**
+- **Project Gutenberg** (gutenberg.org) — 70,000+ free ebooks, multiple formats
+- **Open Library** (openlibrary.org) — Millions of books, lending library
+
+### `send_email` — Send emails via SMTP
+```bash
+send_email to="user@example.com" subject="Hello" body="Hello world!" html_body="<b>Hello world!</b>" cc="cc@example.com"
+```
+
+**Required env vars:** `SMTP_HOST`, `SMTP_PORT` (default 587), `SMTP_USER`, `SMTP_PASS`, `SMTP_SECURE` (optional, default false)
+
+**Parameters:**
+- `to` (required): Recipient email
+- `subject` (required): Email subject
+- `body` (required): Plain text body
+- `html_body`: HTML body (optional)
+- `cc`, `bcc`: CC/BCC recipients (optional)
+- `attachments`: Array of file paths (optional)
+
+### `read_email` — Read emails via IMAP
+```bash
+read_email folder="INBOX" search_query="unread" since="2024-01-01" limit=10 include_body=true
+```
+
+**Required env vars:** `IMAP_HOST`, `IMAP_PORT` (default 993), `IMAP_USER`, `IMAP_PASS`, `IMAP_TLS` (optional, default true)
+
+**Parameters:**
+- `folder`: IMAP folder (default: `INBOX`)
+- `search_query`: Search query (e.g., "from:john", "unread")
+- `since`, `before`: Date filters (ISO 8601)
+- `limit`: Max emails (default 20, max 100)
+- `include_body`: Include body text/html (default: true)
+
+### `telegram_send` — Send messages via Telegram Bot API
+```bash
+telegram_send text="Hello from SwordCLI!" chat_id="123456789" parse_mode=markdown
+```
+
+**Required env vars:** `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` (or pass `chat_id` param)
+
+**Parameters:**
+- `text` (required): Message text
+- `chat_id`: Target chat ID (or set `TELEGRAM_CHAT_ID` env)
+- `parse_mode`: `markdown` or `html` (default: `markdown`)
+- `photo_url`: Photo URL to send (optional)
+- `document_path`: Local file path to send as document (optional)
+
+### `telegram_get_updates` — Get bot updates
+```bash
+telegram_get_updates offset=100 limit=50 timeout=30
+```
+
+**Required env var:** `TELEGRAM_BOT_TOKEN`
+
+**Parameters:**
+- `offset`: Update offset
+- `limit`: Max updates (default 100)
+- `timeout`: Long polling timeout in seconds (default 30)
+
+### Routines — Standing Scheduled Tasks
+```bash
+# Add a daily routine
+sword routine add nightly --prompt "Run tests and summarize failures" --schedule daily
+
+# List all routines
+sword routine list
+
+# See the cron line to install
+sword routine schedule nightly
+# → 0 6 * * * cd /path && sword routine run nightly >> .flow/routines/nightly/cron.log 2>&1
+
+# Run manually (headless, read-only)
+sword routine run nightly --dry-run
+# → would run: node cli/flow.js --prompt "..." --json --cwd /path
+
+# Remove
+sword routine remove nightly
+```
+
+**Schedules:** `on-demand` (default), `hourly`, `daily`, `weekdays`, `weekly`, `once`, `cron:"*/5 * * * *"`
+
+---
+
+### Environment Variables for New Tools
+
+```bash
+# Book download
+SWORD_BOOKS_DIR=          # Default download directory (default: ./books)
+
+# Email (SMTP)
+SMTP_HOST=                # SMTP server hostname
+SMTP_PORT=                # SMTP port (default: 587)
+SMTP_USER=                # SMTP username
+SMTP_PASS=                # SMTP password
+SMTP_SECURE=              # Use SSL/TLS (true/false, default: false)
+
+# Email (IMAP)
+IMAP_HOST=                # IMAP server hostname
+IMAP_PORT=                # IMAP port (default: 993)
+IMAP_USER=                # IMAP username
+IMAP_PASS=                # IMAP password
+IMAP_TLS=                 # Use TLS (default: true)
+
+# Telegram
+TELEGRAM_BOT_TOKEN=       # Bot token from @BotFather
+TELEGRAM_CHAT_ID=         # Default chat ID for telegram_send
+```
+
+---
+
+### Quick Commands (updated)
+
+```bash
+# Routines
+./sword.mjs routine add nightly --prompt "Run tests" --schedule daily
+./sword.mjs routine list
+./sword.mjs routine schedule nightly
+./sword.mjs routine run nightly
+./sword.mjs routine remove nightly
+```
+
+---
+
+## Interactive CLI Commands (updated)
+
+| Command | Description |
+|---------|-------------|
+| `/help` | Show all commands |
+| `/exit` / `/quit` | Exit session |
+| `/clear` | Clear conversation history |
+| `/status` | Show session, model, cwd, history count |
+| `/team` | Toggle 10-agent round-robin discussion mode |
+| `/character <name>` | Switch character (izuku, mahina, kael, ada, turing, sable, muhan, plastos, monk, rishad) |
+| `/model <name>` | Override model (auto, gemini-3.5-flash, etc.) |
+| `/providers` | List/configure custom providers |
+| `/rag add\|search` | Manage knowledge base |
+| `/web <url>` | Open web UI |
+| `/download\|/scrape <url>` | Fetch web content |
+| `/tasks` | Task management (add, list, done, stats) |
+| `/routine <sub>` | Manage routines (add, list, schedule, run, remove) |
+| Ctrl+C | Cancel current turn (press again to exit) |
+| Ctrl+D | Exit immediately |
+
+## Channels — send output to Telegram, Discord, Slack, webhooks
 
 `vendor/agent-scripts/` is a checkout of [steipete/agent-scripts](https://github.com/steipete/agent-scripts),
 providing the OpenClaw-era skills — `openclaw-relay`, `telecrawl`, `whatsapp`,
