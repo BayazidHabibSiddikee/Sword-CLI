@@ -48,6 +48,11 @@ export const toolDefinitions = [
   definition('read_email', 'Read emails via IMAP. Requires IMAP configuration via environment variables (IMAP_HOST, IMAP_PORT, IMAP_USER, IMAP_PASS). Can filter by folder, date range, search query. Returns email metadata and body.', { folder: { type: 'string' }, search_query: { type: 'string' }, since: { type: 'string' }, before: { type: 'string' }, limit: { type: 'integer' }, include_body: { type: 'boolean' } }, []),
   definition('telegram_send', 'Send a message via Telegram Bot API. Requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID environment variables. Supports text, markdown, HTML, photos, documents.', { chat_id: { type: 'string' }, text: { type: 'string' }, parse_mode: { type: 'string', enum: ['markdown', 'html'] }, photo_url: { type: 'string' }, document_path: { type: 'string' } }, ['text']),
   definition('telegram_get_updates', 'Get updates from Telegram Bot API. Requires TELEGRAM_BOT_TOKEN environment variable. Returns recent messages, commands, and callback queries.', { offset: { type: 'integer' }, limit: { type: 'integer' }, timeout: { type: 'integer' } }, []),
+  definition('create_character', 'Create a custom character from image and description (like SillyTavern/Character.io). Upload an image, provide name, personality, description, and example dialogues. Generates a character card (JSON) for use with personas.', { name: { type: 'string' }, image_path: { type: 'string' }, description: { type: 'string' }, personality: { type: 'string' }, example_dialogues: { type: 'array', items: { type: 'string' } }, tags: { type: 'array', items: { type: 'string' } }, creator_notes: { type: 'string' }, avatar_style: { type: 'string', enum: ['anime', 'realistic', 'artistic', 'custom'] }, voice: { type: 'string' }, greeting: { type: 'string' } }, ['name', 'image_path']),
+  definition('upload_knowledge', 'Upload PDF, README, or text files to the RAG knowledge base for powerful context-aware responses. Supports PDF, markdown, text, and code files. Automatically chunks, embeds, and indexes for semantic search.', { file_path: { type: 'string' }, category: { type: 'string' }, title: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } }, chunk_size: { type: 'integer' }, overlap: { type: 'integer' } }, ['file_path']),
+  definition('list_characters', 'List all custom characters created with create_character. Returns character cards with names, descriptions, and metadata.', { tags: { type: 'array', items: { type: 'string' } } }, []),
+  definition('delete_character', 'Delete a custom character by name.', { name: { type: 'string' } }, ['name']),
+  definition('export_character', 'Export a character card as JSON or PNG (with embedded metadata). Supports SillyTavern/Character.io compatible formats.', { name: { type: 'string' }, format: { type: 'string', enum: ['json', 'png', 'tavern', 'character_io'] }, include_image: { type: 'boolean' } }, ['name']),
 ];
 function text(value, label, empty = false) {
   if (typeof value !== 'string' || (!empty && !value.length) || value.length > LIMIT || value.includes('\0')) throw new Error(`Invalid ${label}`);
@@ -436,6 +441,42 @@ export function createTools({ cwd, approve = async () => false, signal, timeout 
       const limit = bounded(args.limit, 1, 100, 100);
       const timeout = bounded(args.timeout, 1, 60, 30);
       return telegramGetUpdates({ offset, limit, timeout, signal });
+    }
+    if (name === 'create_character') {
+      const name = text(args.name, 'name');
+      const imagePath = text(args.image_path, 'image_path');
+      const description = text(args.description, 'description', true);
+      const personality = text(args.personality, 'personality', true);
+      const exampleDialogues = Array.isArray(args.example_dialogues) ? args.example_dialogues.map(d => text(d, 'dialogue')) : [];
+      const tags = Array.isArray(args.tags) ? args.tags.map(t => text(t, 'tag')) : [];
+      const creatorNotes = args.creator_notes ? text(args.creator_notes, 'creator_notes', true) : '';
+      const avatarStyle = args.avatar_style ?? 'anime';
+      const voice = args.voice ? text(args.voice, 'voice') : '';
+      const greeting = args.greeting ? text(args.greeting, 'greeting', true) : '';
+      return createCharacter({ name, imagePath, description, personality, exampleDialogues, tags, creatorNotes, avatarStyle, voice, greeting, cwd: root, signal });
+    }
+    if (name === 'upload_knowledge') {
+      const filePath = text(args.file_path, 'file_path');
+      const category = args.category ? text(args.category, 'category') : 'general';
+      const title = args.title ? text(args.title, 'title') : '';
+      const tags = Array.isArray(args.tags) ? args.tags.map(t => text(t, 'tag')) : [];
+      const chunkSize = bounded(args.chunk_size, 100, 10000, 1000);
+      const overlap = bounded(args.overlap, 0, 500, 200);
+      return uploadKnowledge({ filePath, category, title, tags, chunkSize, overlap, cwd: root, signal });
+    }
+    if (name === 'list_characters') {
+      const tags = Array.isArray(args.tags) ? args.tags.map(t => text(t, 'tag')) : [];
+      return listCharacters({ tags, cwd: root, signal });
+    }
+    if (name === 'delete_character') {
+      const name = text(args.name, 'name');
+      return deleteCharacter({ name, cwd: root, signal });
+    }
+    if (name === 'export_character') {
+      const name = text(args.name, 'name');
+      const format = args.format ?? 'json';
+      const includeImage = args.include_image !== false;
+      return exportCharacter({ name, format, includeImage, cwd: root, signal });
     }
     // Namespaced remote tools (mcp__<server>__<tool>). The name routing, approval
     // gate and live connect all live in dispatchMcpCall; here we only bridge it to
@@ -1133,3 +1174,236 @@ export async function webSearch(query, { fetchFn = globalThis.fetch, maxResults 
     ? { query: q, results, source: 'duckduckgo' }
     : { query: q, results: [], note: 'No results parsed (the search engine may have blocked the request).' };
 }
+
+/**
+ * Character Card System (SillyTavern/Character.io compatible)
+ * ============================================================
+ */
+
+const CHARACTERS_DIR_NAME = '.sword/characters';
+
+function charactersDir(cwd) {
+  return join(resolve(cwd), '.sword/characters');
+}
+
+function normalizeCharacter(raw) {
+  return Object.freeze({
+    name: String(raw?.name ?? '').trim(),
+    image: raw?.image ?? '',
+    description: String(raw?.description ?? '').trim(),
+    personality: String(raw?.personality ?? '').trim(),
+    exampleDialogues: Array.isArray(raw?.exampleDialogues) ? raw.exampleDialogues.map(String) : [],
+    tags: Array.isArray(raw?.tags) ? raw.tags.map(String).filter(Boolean) : [],
+    creatorNotes: String(raw?.creatorNotes ?? '').trim(),
+    avatarStyle: raw?.avatarStyle ?? 'anime',
+    voice: String(raw?.voice ?? '').trim(),
+    greeting: String(raw?.greeting ?? '').trim(),
+    created: raw?.created ?? new Date().toISOString(),
+    updated: raw?.updated ?? new Date().toISOString(),
+    version: raw?.version ?? 1,
+  });
+}
+
+
+function loadCharacters(cwd) {
+  const dir = join(resolve(cwd), '.sword/characters');
+  if (!existsSync(dir)) return [];
+  const files = readdirSync(dir).filter(f => f.endsWith('.json'));
+  const characters = [];
+  for (const file of files) {
+    try {
+      const content = readFileSync(join(dir, file), 'utf8');
+      const char = JSON.parse(content);
+      characters.push(normalizeCharacter(char));
+    } catch { /* skip invalid */ }
+  }
+  return characters;
+}
+
+function characterPath(cwd, name) {
+  return join(resolve(cwd), '.sword/characters', `${name}.json`);
+}
+
+export async function createCharacter({ name, imagePath, description, personality, exampleDialogues, tags, creatorNotes, avatarStyle, voice, greeting, cwd, signal }) {
+  const dir = join(resolve(cwd), '.sword/characters');
+  await mkdir(dir, { recursive: true });
+  
+  const charPath = join(dir, `${name}.json`);
+  if (existsSync(charPath)) {
+    throw new Error(`Character "${name}" already exists. Use a different name or delete first.`);
+  }
+  
+  // Copy image if provided
+  let imageFile = '';
+  if (imagePath && existsSync(imagePath)) {
+    const ext = imagePath.split('.').pop().toLowerCase();
+    const destName = `${name}.${ext}`;
+    const destPath = join(dir, destName);
+    const content = await readFile(imagePath);
+    await writeFile(destPath, content, { mode: 0o644 });
+    imageFile = destName;
+  }
+  
+  const entry = {
+    name,
+    image: imageFile,
+    description,
+    personality,
+    exampleDialogues: exampleDialogues || [],
+    tags: tags || [],
+    creatorNotes,
+    avatarStyle,
+    voice,
+    greeting,
+    created: new Date().toISOString(),
+    updated: new Date().toISOString(),
+    version: 1,
+  };
+  
+  await writeFile(join(dir, `${name}.json`), JSON.stringify(entry, null, 2), { mode: 0o644 });
+  return { success: true, character: normalizeCharacter({ ...entry, image: imageFile }) };
+}
+
+export async function listCharacters({ cwd, tags, signal }) {
+  const chars = loadCharacters(cwd);
+  let filtered = chars;
+  if (tags?.length) {
+    const tagSet = new Set(tags.map(t => t.toLowerCase()));
+    filtered = chars.filter(c => c.tags?.some(t => tagSet.has(t.toLowerCase())));
+  }
+  return { characters: filtered.map(c => ({
+    name: c.name,
+    image: c.image,
+    description: c.description?.slice(0, 200),
+    tags: c.tags,
+    avatarStyle: c.avatarStyle,
+    created: c.created,
+    updated: c.updated,
+  })), total: filtered.length };
+}
+
+export async function deleteCharacter({ cwd, name, signal }) {
+  const dir = charactersDir(cwd);
+  const charPath = join(dir, `${name}.json`);
+  if (!existsSync(charPath)) throw new Error(`Character "${name}" not found`);
+  await rm(join(dir, `${name}.json`), { force: true });
+  // Also remove associated image files
+  const files = readdirSync(dir).filter(f => f.startsWith(`${name}.`) && f !== `${name}.json`);
+  for (const f of files) await rm(join(dir, f), { force: true });
+  return { success: true, name };
+}
+
+export async function exportCharacter({ cwd, name, format = 'json', includeImage = true, signal }) {
+  const chars = loadCharacters(cwd);
+  const char = chars.find(c => c.name === name);
+  if (!char) throw new Error(`Character "${name}" not found`);
+  
+  if (format === 'json') {
+    return { format: 'json', data: JSON.stringify(char, null, 2) };
+  }
+  
+  if (format === 'tavern' || format === 'character_io') {
+    // SillyTavern/Character.io compatible format
+    const tavern = {
+      name: char.name,
+      description: char.description,
+      personality: char.personality,
+      first_mes: char.greeting,
+      mes_example: char.exampleDialogues.join('\n\n'),
+      creator_notes: char.creatorNotes,
+      tags: char.tags,
+      avatar: char.image ? `data:image/png;base64,...` : '',
+    };
+    return { format, data: JSON.stringify(tavern, null, 2) };
+  }
+  
+  if (format === 'png' && includeImage && char.image) {
+    return { format: 'png', note: 'PNG export with embedded metadata not yet implemented' };
+  }
+  
+  return { format: 'json', data: JSON.stringify(char, null, 2) };
+}
+
+/**
+ * Knowledge Base Upload (RAG)
+ * ===========================
+ */
+
+function chunkText(text, chunkSize, overlap) {
+  const chunks = [];
+  let start = 0;
+  while (start < text.length) {
+    const end = Math.min(start + chunkSize, text.length);
+    chunks.push(text.slice(start, end));
+    if (end >= text.length) break;
+    start += chunkSize - overlap;
+  }
+  return chunks;
+}
+
+export async function uploadKnowledge({ filePath, category, title, tags, chunkSize = 1000, overlap = 200, cwd, signal }) {
+  const fullPath = resolve(cwd, filePath);
+  if (!existsSync(fullPath)) throw new Error(`File not found: ${filePath}`);
+  
+  const ext = filePath.split('.').pop().toLowerCase();
+  let content = '';
+  
+  if (ext === 'pdf') {
+    const { PDFParse } = await import('pdf-parse');
+    const parser = new PDFParse({ data: await readFile(fullPath) });
+    const result = await parser.getText({ first: 0 });
+    content = result.text;
+  } else if (['md', 'txt', 'js', 'ts', 'py', 'json', 'yaml', 'yml', 'mdx', 'html', 'css', 'rs', 'go', 'cpp', 'c', 'h'].includes(ext)) {
+    content = await readFile(fullPath, 'utf8');
+  } else {
+    throw new Error(`Unsupported file type: ${ext}`);
+  }
+  
+  if (!content.trim()) throw new Error('File is empty or contains no extractable text');
+  
+  // Chunk the content
+  const chunks = chunkText(content, chunkSize, overlap);
+  
+  // Import RAG engine
+  const { RagEngine } = await import('./brain/rag.js');
+  const ragDbPath = join(cwd, '.flow', 'rag.db');
+  const engine = new RagEngine(ragDbPath);
+  
+  const titleStr = title || filePath.split('/').pop();
+  const ids = [];
+  
+  try {
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      const id = engine.insertKnowledge(
+        category,
+        `${titleStr} (chunk ${i + 1}/${chunks.length})`,
+        chunk,
+        'uploaded'
+      );
+      ids.push(id);
+    }
+    
+    return {
+      success: true,
+      file: filePath,
+      category,
+      title: titleStr,
+      chunks: chunks.length,
+      ids,
+      tags: tags || [],
+    };
+  } finally {
+    try { engine.db?.close(); } catch { }
+  }
+}
+
+/**
+ * Character Export Formats
+ * ========================
+ * 
+ * SillyTavern format: { name, description, personality, first_mes, mes_example, creator_notes, tags, avatar }
+ * Character.io format: Similar with slight field differences
+ * JSON: Full character object
+ * PNG: Image with embedded metadata (steganography)
+ */

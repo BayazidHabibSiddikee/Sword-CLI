@@ -35,7 +35,8 @@ export const BUILTIN_TOOL_NAMES = Object.freeze([
   'list_files', 'read_file', 'search_files', 'write_file', 'edit_file',
   'apply_patch', 'run_command', 'save_to_rag', 'read_pdf', 'fetch_web',
   'fetch_web_rendered', 'web_search', 'load_skill', 'task',
-  'download_book', 'send_email', 'read_email', 'telegram_send', 'telegram_get_updates'
+  'download_book', 'send_email', 'read_email', 'telegram_send', 'telegram_get_updates',
+  'create_character', 'upload_knowledge', 'list_characters', 'delete_character', 'export_character'
 ]);
 
 // Key names whose values are credentials. Matched case-insensitively, and also
