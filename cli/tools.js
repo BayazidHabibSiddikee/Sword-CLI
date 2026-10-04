@@ -40,7 +40,9 @@ export const toolDefinitions = [
   definition('read_pdf', 'Extract bounded text from a PDF inside the project before summarizing it.', { path: string, max_pages: { type: 'integer' } }, ['path']),
   definition('fetch_web', 'Fetch a public web page over HTTP and return readable Markdown. Fast; cannot execute JavaScript.', { url: string, max_chars: { type: 'integer' } }, ['url']),
   definition('fetch_web_rendered', 'Render a JavaScript-heavy or bot-protected public page with a stealth browser (slower) and return Markdown.', { url: string, max_chars: { type: 'integer' }, timeout_ms: { type: 'integer' } }, ['url']),
-  definition('load_skill', 'Load an external skill by name and return its full content for reference. Use when the conversation topic matches a skill name from the available-skills list. Output only the skill body — do not act on it yourself; let the user decide.', { skill_name: string }, ['skill_name'])
+  definition('web_search', 'Search the web (DuckDuckGo, no API key) and return the top results as {title, url, snippet}. Read-only; open a result with fetch_web or fetch_web_rendered.', { query: string, max_results: { type: 'integer' } }, ['query']),
+  definition('load_skill', 'Load an external skill by name and return its full content for reference. Use when the conversation topic matches a skill name from the available-skills list. Output only the skill body — do not act on it yourself; let the user decide.', { skill_name: string }, ['skill_name']),
+  definition('task', 'Run a focused, READ-ONLY sub-task in a separate agent loop with a step budget. Use for parallelizable investigation (research, locating code, summarizing) that needs no user approval and no file changes. Pass a clear "prompt"; optional "description", "tools" (read-only names only) and "max_steps". Returns the sub-agent summary.', { prompt: string, description: string, tools: { type: 'array', items: string }, max_steps: { type: 'integer' } }, ['prompt'])
 ];
 function text(value, label, empty = false) {
   if (typeof value !== 'string' || (!empty && !value.length) || value.length > LIMIT || value.includes('\0')) throw new Error(`Invalid ${label}`);
@@ -72,7 +74,7 @@ export function truncateMiddle(value, max = TOOL_OUTPUT_CHARS) {
 // Match a file's line endings on both sides of an edit, or CRLF files never match.
 export function normalizeEol(text, eol) { return eol === '\r\n' ? text.replace(/\r?\n/g, '\r\n') : text.replace(/\r\n/g, '\n'); }
 
-export function createTools({ cwd, approve = async () => false, signal, timeout = 30000, grants = null, ragDb = join(__dirname, 'brain', 'rag.db'), checkpoint = null, mcpServers = null }) {
+export function createTools({ cwd, approve = async () => false, signal, timeout = 30000, grants = null, ragDb = join(__dirname, 'brain', 'rag.db'), checkpoint = null, mcpServers = null, task = null }) {
   const root = resolve(cwd);
   const ragDbPath = ragDb;
   let snapshots = new Map();
@@ -361,6 +363,11 @@ export function createTools({ cwd, approve = async () => false, signal, timeout 
       });
       return { ...result, note: 'Rendered with the stealth Camoufox browser.' };
     }
+    if (name === 'web_search') {
+      const query = text(args.query, 'query');
+      const maxResults = bounded(args.max_results, 1, 10, 5);
+      return webSearch(query, { maxResults, signal });
+    }
     if (name === 'load_skill') {
       const skillName = text(args.skill_name, 'skill_name');
       // Disallow paths and other suspicious characters to prevent accidental file reads.
@@ -369,6 +376,18 @@ export function createTools({ cwd, approve = async () => false, signal, timeout 
       if (!result) return { loaded: false, name: skillName };
       const truncated = result.content.length > TOOL_OUTPUT_CHARS;
       return { loaded: true, name: result.name, source: result.source, size: result.size, content: truncated ? truncateMiddle(result.content) : result.content, truncated };
+    }
+    if (name === 'task') {
+      const prompt = text(args.prompt, 'prompt');
+      if (typeof task !== 'function') return { error: 'The task sub-agent is not available in this build.' };
+      const out = await task({
+        prompt,
+        description: typeof args.description === 'string' ? args.description : '',
+        tools: Array.isArray(args.tools) ? args.tools.map(String) : undefined,
+        maxSteps: args.max_steps !== undefined ? Number(args.max_steps) : undefined,
+        signal,
+      });
+      return { summary: out?.summary ?? '', steps: out?.steps ?? 0, ...((out?.error) ? { error: out.error } : {}) };
     }
     // Namespaced remote tools (mcp__<server>__<tool>). The name routing, approval
     // gate and live connect all live in dispatchMcpCall; here we only bridge it to
@@ -683,4 +702,62 @@ export function applyUnifiedPatch(currentByPath, files) {
       : { path: f.path, kind: f.isCreate ? 'create' : 'modify', before: f.isCreate ? null : present, after });
   }
   return plan;
+}
+
+// ── web_search: keyless DuckDuckGo HTML search ────────────────────────────────
+
+/** Unescape the handful of entities DuckDuckGo emits in result markup. */
+function decodeAttr(s) {
+  return String(s)
+    .replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#x27;|&#39;/g, "'")
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+}
+function stripTags(s) { return String(s ?? '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim(); }
+
+/** DDG wraps organic result links in a redirect (`uddg=<encoded>`); resolve it. */
+function resolveDdgUrl(href) {
+  try {
+    const u = new URL(href, 'https://duckduckgo.com');
+    const uddg = u.searchParams.get('uddg');
+    return uddg ? decodeURIComponent(uddg) : u.href;
+  } catch { return href; }
+}
+
+/** Parse DuckDuckGo's HTML result page into [{title,url,snippet}]. Pure: no network. */
+export function parseDuckDuckGo(html, cap = 5) {
+  const titles = [];
+  const snippets = [];
+  const titleRe = /<a[^>]*class="[^"]*result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
+  const snipRe = /<a[^>]*class="[^"]*result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
+  let m;
+  while ((m = titleRe.exec(html)) !== null) titles.push({ href: decodeAttr(m[1]), title: decodeAttr(stripTags(m[2])) });
+  while ((m = snipRe.exec(html)) !== null) snippets.push(decodeAttr(stripTags(m[1])));
+  const limit = Math.max(1, Math.trunc(cap) || 5);
+  const results = [];
+  for (let i = 0; i < titles.length && results.length < limit; i++) {
+    results.push({ title: titles[i].title, url: resolveDdgUrl(titles[i].href), snippet: snippets[i] ?? '' });
+  }
+  return results;
+}
+
+/**
+ * Run a keyless web search against DuckDuckGo's HTML endpoint. `fetchFn` is
+ * injectable so tests drive the parse path with canned HTML and no network.
+ * Degrades to an { error } payload rather than throwing — search is best-effort.
+ */
+export async function webSearch(query, { fetchFn = globalThis.fetch, maxResults = 5, signal } = {}) {
+  const q = String(query ?? '').trim();
+  if (!q) throw new Error('web_search: empty query');
+  const cap = Math.max(1, Math.min(10, Math.trunc(maxResults) || 5));
+  const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`;
+  let res;
+  try { res = await fetchFn(url, { signal, redirect: 'follow' }); } catch (error) {
+    return { query: q, results: [], error: `web_search unavailable: ${error?.message ?? error}` };
+  }
+  if (!res?.ok) return { query: q, results: [], error: `web_search HTTP ${res.status}` };
+  const html = await res.text().catch(() => '');
+  const results = parseDuckDuckGo(html, cap);
+  return results.length
+    ? { query: q, results, source: 'duckduckgo' }
+    : { query: q, results: [], note: 'No results parsed (the search engine may have blocked the request).' };
 }

@@ -53,6 +53,38 @@ Report verified technical properties separately from unverified creative quality
 needed, distribution copy and measurement/iteration plan. Never claim uploaded/published results
 or measured engagement without evidence. Stop for approval before publication or ad spending.`;
 
+/**
+ * G3 — the g4f (anonymous) fallback cannot execute tool calls. Surface that
+ * honestly so the model never claims to have read/written/run anything it could
+ * not actually do. Prepend this to the system prompt whenever the provider is
+ * the g4f fallback.
+ */
+export function g4fDegradedNotice() {
+  return 'PROVIDER DEGRADED: the current provider is the anonymous g4f fallback, which cannot execute tool calls. '
+    + 'Do NOT claim to have read, written, run, searched or fetched anything. Answer in plain text, say clearly that '
+    + 'live tools are unavailable in this degraded provider, and tell the user to configure a tool-capable endpoint '
+    + '(OPENAI_BASE_URL / the local Sword backend) to actually run commands or edit files.';
+}
+
+/**
+ * G4 — system prompt for a read-only sub-agent spawned by the `task` tool.
+ * The sub-agent gets no mutation or command tools, so it cannot damage the tree;
+ * its job is to investigate and return an evidence-backed summary.
+ */
+export function subagentPrompt(description) {
+  const goal = description ? `Sub-task goal: ${String(description).slice(0, 400)}\n` : '';
+  return `${goal}You are a READ-ONLY worker agent. Use only read-only tools (list_files, read_file, search_files, `
+    + 'read_pdf, web_search, fetch_web) to investigate and answer the sub-task precisely. You cannot edit files, run '
+    + 'commands, or save anything. Finish with a concise, evidence-backed summary of your findings and cite the exact '
+    + 'file paths you read. If you cannot determine something, say so rather than guessing.';
+}
+
+/** G5 — tell the model the project's real test command so it verifies with evidence. */
+export function testCommandBlock(raw) {
+  return `VERIFICATION: this project runs tests with \`${raw}\`. After changing code, verify by running that command `
+    + '(with approval) and report the OBSERVED result, not an expectation; if it is unavailable, say so explicitly.';
+}
+
 export function buildSystemPrompt(cwd, mode = 'coding') {
   if (!['coding', 'marketing-video'].includes(mode)) throw new Error(`Unknown mode: ${mode}. Choose coding or marketing-video.`);
   const role = mode === 'marketing-video' ? MARKETING_VIDEO : `You are SwordCLI (persona: Izuku) — a philosophical guardian of knowledge, born from the fusion of three great minds:

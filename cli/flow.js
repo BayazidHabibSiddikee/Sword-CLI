@@ -7,7 +7,8 @@ import chalk from 'chalk';
 import { providerConfig, createRequest, runTurn, loadSession, saveSession } from './agent.js';
 import { attemptFallback, fallbackNotice } from './providerFallback.js';
 import { createTools, toolDefinitions } from './tools.js';
-import { buildSystemPrompt, buildMemoryBlock } from './prompts.js';
+import { buildSystemPrompt, buildMemoryBlock, g4fDegradedNotice, subagentPrompt, testCommandBlock } from './prompts.js';
+import { detectTestCommand } from './testCommand.js';
 import { discoverSkills, buildCompactIndex } from './externalSkills.js';
 import { configureSwordBackend, readLocalUnifiedKey } from './backend.js';
 import { createSharedClient, recentContext } from './shared.js';
@@ -256,7 +257,15 @@ async function main() {
     }
   }
   await ensureSkillBlock(cwd);
-  const system = { role: 'system', content: buildSystemPrompt(cwd, shared?.mode || values.mode) + (_skillBlock ? `\n\n${_skillBlock}` : '') + archiveHint(0) };
+  // G5: tell the model the project's real test command so it verifies with evidence.
+  const detectedTests = detectTestCommand(cwd);
+  const systemExtras = [
+    _skillBlock ? `\n\n${_skillBlock}` : '',
+    archiveHint(0),
+    detectedTests ? `\n\n${testCommandBlock(detectedTests.raw)}` : '',
+    useG4f ? `\n\n${g4fDegradedNotice()}` : '',   // G3: honest about a tool-less provider
+  ].join('');
+  const system = { role: 'system', content: buildSystemPrompt(cwd, shared?.mode || values.mode) + systemExtras };
   const provider = { ...config, model: values.model || shared?.model || selectedModel };
   // ── MCP remote tools (Phase 4) ─────────────────────────────────────────────
   // Load config, connect to each enabled server ONCE to enumerate its tools, and
@@ -405,6 +414,37 @@ async function main() {
       return request([{ role: 'system', content: notice }, ...outcome.messages]);
     };
   }
+  // G4: a read-only sub-agent spawned by the `task` tool. It shares cwd/grants/
+  // checkpoint with the session but gets NO mutation/command tools and a hard step
+  // cap, so a fanned-out worker can investigate (and report) without damaging the
+  // tree or bypassing approval. It reuses the session's provider and is recursion-
+  // guarded: the sub-agent's tool surface excludes `task` itself.
+  const READONLY_TOOLS = new Set(['list_files', 'read_file', 'search_files', 'read_pdf', 'fetch_web', 'fetch_web_rendered', 'web_search', 'load_skill']);
+  const taskRunner = async ({ prompt, description, tools, maxSteps, signal: taskSignal }) => {
+    const sig = taskSignal ?? active?.signal;
+    const requested = Array.isArray(tools) && tools.length ? tools : null;
+    const allowed = requested ? requested.filter(n => READONLY_TOOLS.has(n)) : [...READONLY_TOOLS];
+    if (!allowed.length) return { summary: '', steps: 0, error: 'task: no read-only tools selected' };
+    const subDefs = toolDefinitions.filter(d => allowed.includes(d.function.name));
+    const subExecute = createTools({ cwd, approve: async () => false, signal: sig, timeout: 60000, grants, ragDb, checkpoint: checkpointApi, mcpServers: [] });
+    const safeExecute = async (toolName, args) => READONLY_TOOLS.has(toolName)
+      ? subExecute(toolName, args)
+      : { error: `task sub-agent is read-only; ${toolName} is not permitted` };
+    const subRequest = useG4f
+      ? createG4fRequest(subDefs, sig, undefined)
+      : createRequest(provider, subDefs, sig, undefined);
+    const seed = [
+      { role: 'system', content: subagentPrompt(description) },
+      { role: 'user', content: String(prompt) },
+    ];
+    const steps = Math.max(1, Math.min(10, Number.isFinite(maxSteps) ? Number(maxSteps) : 6));
+    try {
+      const out = await runTurn({ messages: seed, request: subRequest, execute: safeExecute, maxSteps: steps, signal: sig, onEvent: () => {} });
+      return { summary: out.text ?? '', steps };
+    } catch (error) {
+      return { summary: '', steps: 0, error: `task sub-agent failed: ${error?.message ?? error}` };
+    }
+  };
   async function turn(prompt) {
     active = new AbortController();
     let completed = null;
@@ -466,7 +506,7 @@ async function main() {
       lastTeamAggregate = null;
       if (teamMode) {
         if (!values.json && interactive) console.error(chalk.dim(`\n[Team] Round-robin discussion starting (${teamRounds} round(s))...\n`));
-        const execute = createTools({ cwd, approve, signal: active.signal, timeout: 120000, grants, ragDb, checkpoint: checkpointApi, mcpServers });
+        const execute = createTools({ cwd, approve, signal: active.signal, timeout: 120000, grants, ragDb, checkpoint: checkpointApi, mcpServers, task: taskRunner });
         lastExecute = execute;
         const discussion = [];
         let teamHistory = [...inputs];
@@ -530,7 +570,7 @@ async function main() {
         const checkpoint = shared
           ? messages => { completed = [...history, { role: 'user', content: prompt }, ...messages.slice(inputs.length)]; }
           : values.session ? messages => { completed = messages.slice(1); } : () => {};
-        const execute = createTools({ cwd, approve, signal: active.signal, timeout: 120000, grants, ragDb, checkpoint: checkpointApi, mcpServers });
+        const execute = createTools({ cwd, approve, signal: active.signal, timeout: 120000, grants, ragDb, checkpoint: checkpointApi, mcpServers, task: taskRunner });
         lastExecute = execute;
         // Stream tokens to stderr only for a human at a terminal, so --json output and
         // piped stdout stay clean. The first token retires the indicator.
