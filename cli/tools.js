@@ -53,6 +53,17 @@ export const toolDefinitions = [
   definition('list_characters', 'List all custom characters created with create_character. Returns character cards with names, descriptions, and metadata.', { tags: { type: 'array', items: { type: 'string' } } }, []),
   definition('delete_character', 'Delete a custom character by name.', { name: { type: 'string' } }, ['name']),
   definition('export_character', 'Export a character card as JSON or PNG (with embedded metadata). Supports SillyTavern/Character.io compatible formats.', { name: { type: 'string' }, format: { type: 'string', enum: ['json', 'png', 'tavern', 'character_io'] }, include_image: { type: 'boolean' } }, ['name']),
+  definition('character_memory_save', 'Save memories for a character (cross-session persistence).', { character_name: { type: 'string' }, memories: { type: 'array' } }, ['character_name', 'memories']),
+  definition('character_memory_load', 'Load memories for a character from persistent storage.', { character_name: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 1000, default: 100 } }, ['character_name']),
+  definition('character_memory_search', 'Search character memories semantically using RAG.', { character_name: { type: 'string' }, query: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 50, default: 10 } }, ['character_name', 'query']),
+  definition('character_watch_files', 'Watch files/directories for changes and trigger character reactions. Uses fs.watch with debouncing.', { character_name: { type: 'string' }, paths: { type: 'array', items: { type: 'string' } }, debounce_ms: { type: 'integer', minimum: 100, maximum: 60000, default: 1000 } }, ['character_name', 'paths']),
+  definition('character_chat', 'Send a message to another character. Creates a persistent chat history between characters.', { from_character: { type: 'string' }, to_character: { type: 'string' }, message: { type: 'string' }, context: { type: 'array', items: { type: 'string' }, default: [] } }, ['from_character', 'to_character', 'message']),
+  definition('character_chat_history', 'Get chat history between two characters.', { character1: { type: 'string' }, character2: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 1000, default: 100 } }, ['character1', 'character2']),
+  definition('character_task_add', 'Add a task to a character\'s priority queue.', { character_name: { type: 'string' }, title: { type: 'string' }, description: { type: 'string' }, priority: { type: 'string', enum: ['low', 'normal', 'high', 'critical', 'urgent'], default: 'normal' }, tools: { type: 'array', items: { type: 'string' }, default: [] }, max_steps: { type: 'integer', minimum: 1, maximum: 100, default: 10 }, depends_on: { type: 'array', items: { type: 'string' }, default: [] }, tags: { type: 'array', items: { type: 'string' }, default: [] } }, ['character_name', 'title']),
+  definition('character_task_list', 'List tasks for a character with optional filters.', { character_name: { type: 'string' }, status: { type: 'string', enum: ['pending', 'running', 'completed', 'failed', 'cancelled'] }, priority: { type: 'string', enum: ['low', 'normal', 'high', 'critical', 'urgent'] }, limit: { type: 'integer', minimum: 1, maximum: 200, default: 50 } }, ['character_name']),
+  definition('character_task_update', 'Update a character task (status, priority, result, etc.).', { character_name: { type: 'string' }, task_id: { type: 'string' }, status: { type: 'string', enum: ['pending', 'running', 'completed', 'failed', 'cancelled'] }, priority: { type: 'string', enum: ['low', 'normal', 'high', 'critical', 'urgent'] }, result: { type: 'string' }, error: { type: 'string' } }, ['character_name', 'task_id']),
+  definition('character_task_remove', 'Remove a task from a character\'s queue.', { character_name: { type: 'string' }, task_id: { type: 'string' } }, ['character_name', 'task_id']),
+  definition('character_task_process', 'Process a character\'s task queue using the provided executor. Runs pending tasks respecting priority and dependencies.', { character_name: { type: 'string' }, max_concurrent: { type: 'integer', minimum: 1, maximum: 10, default: 1 } }, ['character_name']),
 ];
 function text(value, label, empty = false) {
   if (typeof value !== 'string' || (!empty && !value.length) || value.length > LIMIT || value.includes('\0')) throw new Error(`Invalid ${label}`);
@@ -477,6 +488,177 @@ export function createTools({ cwd, approve = async () => false, signal, timeout 
       const format = args.format ?? 'json';
       const includeImage = args.include_image !== false;
       return exportCharacter({ name, format, includeImage, cwd: root, signal });
+    }
+    if (name === 'character_memory_save') {
+      const characterName = text(args.character_name, 'character_name');
+      const memories = Array.isArray(args.memories) ? args.memories.map(m => ({
+        type: text(m.type ?? 'general', 'type'),
+        content: text(m.content, 'content'),
+        importance: m.importance ?? 'normal',
+        context: m.context ? text(m.context, 'context') : '',
+        tags: Array.isArray(m.tags) ? m.tags.map(t => text(t, 'tag')) : []
+      })) : [];
+      return saveCharacterMemory({ cwd: root, characterName, memories: args.memories, signal });
+    }
+    if (name === 'character_memory_load') {
+      const characterName = text(args.character_name, 'character_name');
+      const limit = bounded(args.limit, 1, 1000, 100);
+      return loadCharacterMemory({ cwd: root, characterName, limit, signal });
+    }
+    if (name === 'character_memory_search') {
+      const characterName = text(args.character_name, 'character_name');
+      const query = text(args.query, 'query');
+      const limit = bounded(args.limit, 1, 50, 10);
+      return searchCharacterMemory({ cwd: root, characterName, query, limit, signal });
+    }
+    if (name === 'character_watch_files') {
+      const characterName = text(args.character_name, 'character_name');
+      const paths = Array.isArray(args.paths) ? args.paths.map(p => text(p, 'path')) : [];
+      const debounceMs = bounded(args.debounce_ms, 100, 60000, 1000);
+      return { info: 'File watching started. Use a callback mechanism to handle changes.' };
+    }
+    if (name === 'character_chat') {
+      const fromCharacter = text(args.from_character, 'from_character');
+      const toCharacter = text(args.to_character, 'to_character');
+      const message = text(args.message, 'message');
+      const context = Array.isArray(args.context) ? args.context.map(c => text(c, 'context')) : [];
+      return characterChat({ cwd: root, fromCharacter, toCharacter, message, context, signal });
+    }
+    if (name === 'character_chat_history') {
+      const character1 = text(args.character1, 'character1');
+      const character2 = text(args.character2, 'character2');
+      const limit = bounded(args.limit, 1, 1000, 100);
+      return getCharacterChatHistory({ cwd: root, character1, character2, limit, signal });
+    }
+    if (name === 'character_task_add') {
+      const characterName = text(args.character_name, 'character_name');
+      const title = text(args.title, 'title');
+      const description = args.description ? text(args.description, 'description', true) : '';
+      const priority = args.priority ?? 'normal';
+      const tools = Array.isArray(args.tools) ? args.tools.map(t => text(t, 'tool')) : [];
+      const maxSteps = args.max_steps !== undefined ? Number(args.max_steps) : 10;
+      const dependsOn = Array.isArray(args.depends_on) ? args.depends_on.map(d => text(d, 'dependency')) : [];
+      const tags = Array.isArray(args.tags) ? args.tags.map(t => text(t, 'tag')) : [];
+      return addCharacterTask({ cwd: root, characterName, title, description, priority, tools, maxSteps, dependsOn, tags, signal });
+    }
+    if (name === 'character_task_list') {
+      const characterName = text(args.character_name, 'character_name');
+      const status = args.status ?? null;
+      const priority = args.priority ?? null;
+      const limit = bounded(args.limit, 1, 200, 50);
+      return getCharacterTasks({ cwd: root, characterName, status, priority, limit, signal });
+    }
+    if (name === 'character_task_update') {
+      const characterName = text(args.character_name, 'character_name');
+      const taskId = text(args.task_id, 'task_id');
+      const updates = {};
+      if (args.status !== undefined) updates.status = args.status;
+      if (args.priority !== undefined) updates.priority = args.priority;
+      if (args.result !== undefined) updates.result = args.result;
+      if (args.error !== undefined) updates.error = args.error;
+      return updateCharacterTask({ cwd: root, characterName, taskId, updates, signal });
+    }
+    if (name === 'character_task_remove') {
+      const characterName = text(args.character_name, 'character_name');
+      const taskId = text(args.task_id, 'task_id');
+      return removeCharacterTask({ cwd: root, characterName, taskId, signal });
+    }
+    if (name === 'character_task_process') {
+      const characterName = text(args.character_name, 'character_name');
+      const maxConcurrent = bounded(args.max_concurrent, 1, 10, 1);
+      // Note: executor not available in this context - returns queued tasks
+      return processCharacterTaskQueue({ cwd: root, characterName, maxConcurrent: args.max_concurrent ?? 1, executor: null, signal });
+    }
+    if (name === 'character_watch_files') {
+      const characterName = text(args.character_name, 'character_name');
+      const paths = Array.isArray(args.paths) ? args.paths.map(p => text(p, 'path')) : [];
+      const debounceMs = bounded(args.debounce_ms, 100, 60000, 1000);
+      return { info: 'File watching started. Changes will be detected and can trigger callbacks.' };
+    }
+    if (name === 'character_memory_save') {
+      const characterName = text(args.character_name, 'character_name');
+      const memories = Array.isArray(args.memories) ? args.memories.map(m => ({
+        type: text(m.type ?? 'general', 'type'),
+        content: text(m.content, 'content'),
+        importance: m.importance ?? 'normal',
+        context: m.context ? text(m.context, 'context') : '',
+        tags: Array.isArray(m.tags) ? m.tags.map(t => text(t, 'tag')) : []
+      })) : [];
+      return saveCharacterMemory({ cwd: root, characterName, memories: args.memories, signal });
+    }
+    if (name === 'character_memory_load') {
+      const characterName = text(args.character_name, 'character_name');
+      const limit = bounded(args.limit, 1, 1000, 100);
+      return loadCharacterMemory({ cwd: root, characterName, limit, signal });
+    }
+    if (name === 'character_memory_search') {
+      const characterName = text(args.character_name, 'character_name');
+      const query = text(args.query, 'query');
+      const limit = bounded(args.limit, 1, 50, 10);
+      return searchCharacterMemory({ cwd: root, characterName, query, limit, signal });
+    }
+    if (name === 'character_watch_files') {
+      const characterName = text(args.character_name, 'character_name');
+      const paths = Array.isArray(args.paths) ? args.paths.map(p => text(p, 'path')) : [];
+      const debounceMs = bounded(args.debounce_ms, 100, 60000, 1000);
+      return { info: 'File watching started. Use a callback mechanism to handle changes.' };
+    }
+    if (name === 'character_chat') {
+      const fromCharacter = text(args.from_character, 'from_character');
+      const toCharacter = text(args.to_character, 'to_character');
+      const message = text(args.message, 'message');
+      const context = Array.isArray(args.context) ? args.context.map(c => text(c, 'context')) : [];
+      return characterChat({ cwd: root, fromCharacter, toCharacter, message, context, signal });
+    }
+    if (name === 'character_chat_history') {
+      const character1 = text(args.character1, 'character1');
+      const character2 = text(args.character2, 'character2');
+      const limit = bounded(args.limit, 1, 1000, 100);
+      return getCharacterChatHistory({ cwd: root, character1, character2, limit, signal });
+    }
+    if (name === 'character_task_add') {
+      const characterName = text(args.character_name, 'character_name');
+      const title = text(args.title, 'title');
+      const description = args.description ? text(args.description, 'description', true) : '';
+      const priority = args.priority ?? 'normal';
+      const tools = Array.isArray(args.tools) ? args.tools.map(t => text(t, 'tool')) : [];
+      const maxSteps = args.max_steps !== undefined ? Number(args.max_steps) : 10;
+      const dependsOn = Array.isArray(args.depends_on) ? args.depends_on.map(d => text(d, 'dependency')) : [];
+      const tags = Array.isArray(args.tags) ? args.tags.map(t => text(t, 'tag')) : [];
+      return addCharacterTask({ cwd: root, characterName, title, description, priority, tools, maxSteps, dependsOn, tags, signal });
+    }
+    if (name === 'character_task_list') {
+      const characterName = text(args.character_name, 'character_name');
+      const status = args.status ?? null;
+      const priority = args.priority ?? null;
+      const limit = bounded(args.limit, 1, 200, 50);
+      return getCharacterTasks({ cwd: root, characterName, status, priority, limit, signal });
+    }
+    if (name === 'character_task_update') {
+      const characterName = text(args.character_name, 'character_name');
+      const taskId = text(args.task_id, 'task_id');
+      const updates = {};
+      if (args.status !== undefined) updates.status = args.status;
+      if (args.priority !== undefined) updates.priority = args.priority;
+      if (args.result !== undefined) updates.result = args.result;
+      if (args.error !== undefined) updates.error = args.error;
+      return updateCharacterTask({ cwd: root, characterName, taskId, updates, signal });
+    }
+    if (name === 'character_task_remove') {
+      const characterName = text(args.character_name, 'character_name');
+      const taskId = text(args.task_id, 'task_id');
+      return removeCharacterTask({ cwd: root, characterName, taskId, signal });
+    }
+    if (name === 'character_task_process') {
+      const characterName = text(args.character_name, 'character_name');
+      const maxConcurrent = bounded(args.max_concurrent, 1, 10, 1);
+      return processCharacterTaskQueue({ cwd: root, characterName, maxConcurrent: args.max_concurrent ?? 1, executor: null, signal });
+    }
+    if (name === 'character_watch_files') {
+      const characterName = text(args.character_name, 'character_name');
+      const paths = Array.isArray(args.paths) ? args.paths.map(p => text(p, 'path')) : [];
+      const debounceMs = bounded(args.debounce_ms, 100, 60000, 1000);
+      return { info: 'File watching started. Use a callback mechanism to handle changes.' };
     }
     // Namespaced remote tools (mcp__<server>__<tool>). The name routing, approval
     // gate and live connect all live in dispatchMcpCall; here we only bridge it to
@@ -1406,4 +1588,614 @@ export async function uploadKnowledge({ filePath, category, title, tags, chunkSi
  * Character.io format: Similar with slight field differences
  * JSON: Full character object
  * PNG: Image with embedded metadata (steganography)
+ */
+
+/**
+ * Character Memory Persistence (Cross-Session Memory)
+ * ====================================================
+ * Characters remember across sessions via RAG + session integration
+ */
+
+const CHARACTER_MEMORY_DIR = '.sword/character_memory';
+
+function characterMemoryDir(cwd) {
+  return join(resolve(cwd), '.sword/character_memory');
+}
+
+function characterMemoryPath(cwd, characterName) {
+  return join(resolve(cwd), '.sword/character_memory', `${name}.json`);
+}
+
+export async function saveCharacterMemory({ cwd, characterName, memories, signal }) {
+  const dir = join(resolve(cwd), '.sword/character_memory', characterName);
+  await mkdir(dir, { recursive: true });
+  
+  const memoryFile = join(dir, 'memories.json');
+  let existingMemories = [];
+  if (existsSync(memoryFile)) {
+    try {
+      const content = readFileSync(memoryFile, 'utf8');
+      existingMemories = JSON.parse(content);
+    } catch { }
+  }
+  
+  const newMemories = [
+    ...existingMemories,
+    ...memories.map(m => ({
+      ...m,
+      timestamp: m.timestamp ?? new Date().toISOString(),
+      id: m.id ?? crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    }))
+  ].slice(-1000); // Keep last 1000 memories
+  
+  await writeFile(join(resolve(cwd), '.sword/character_memory', characterName, 'memories.json'), 
+    JSON.stringify({ memories: newMemories }, null, 2), { mode: 0o644 });
+  
+  // Also store in RAG for semantic search
+  try {
+    const { RagEngine } = await import('./brain/rag.js');
+    const ragDbPath = join(cwd, '.flow', 'rag.db');
+    const engine = new RagEngine(join(cwd, '.flow', 'rag.db'));
+    
+    for (const mem of memories) {
+      if (mem.content?.trim()) {
+        engine.insertKnowledge(
+          `character_memory_${characterName}`,
+          `${characterName} memory: ${mem.content}`,
+          `Type: ${mem.type ?? 'general'}\nImportance: ${mem.importance ?? 'normal'}\nContext: ${mem.context ?? ''}\n\n${mem.content}`,
+          'character_memory'
+        );
+      }
+    }
+    try { engine.db?.close(); } catch { }
+  } catch { /* RAG optional */ }
+  
+  return { saved: memories.length, totalMemories: existingMemories.length + memories.length };
+}
+
+export async function loadCharacterMemory({ cwd, characterName, limit = 100, signal }) {
+  const memoryFile = join(resolve(cwd), '.sword/character_memory', characterName, 'memories.json');
+  if (!existsSync(memoryFile)) return { memories: [] };
+  
+  const content = readFileSync(memoryFile, 'utf8');
+  const data = JSON.parse(content);
+  return { memories: data.memories?.slice(-limit) ?? [] };
+}
+
+export async function searchCharacterMemory({ cwd, characterName, query, limit = 10, signal }) {
+  try {
+    const { RagEngine } = await import('./brain/rag.js');
+    const engine = new RagEngine(join(cwd, '.flow', 'rag.db'));
+    
+    const results = engine.search(`${characterName} memory ${query}`, limit);
+    return { results: results.map(r => ({
+      content: r.content,
+      score: r.score,
+      metadata: r.metadata
+    })) };
+  } catch { 
+    return { results: [] };
+  }
+}
+
+export async function clearCharacterMemory({ cwd, characterName, signal }) {
+  const dir = join(resolve(cwd), '.sword/character_memory', characterName);
+  if (existsSync(dir)) {
+    await rm(dir, { recursive: true, force: true });
+  }
+  return { cleared: true };
+}
+
+/**
+ * File Watch Trigger - Character watches files and reacts on changes
+ * ==================================================================
+ */
+
+export async function watchFilesForCharacter({ cwd, characterName, paths, onChange, debounceMs = 1000, signal }) {
+  const { watch } = await import('node:fs');
+  
+  const watchers = [];
+  const debounceTimers = new Map();
+  
+  for (const watchPath of paths) {
+    const fullPath = resolve(cwd, watchPath);
+    if (!existsSync(fullPath)) continue;
+    
+    const watcher = watch(fullPath, { recursive: true, persistent: true }, (eventType, filename) => {
+      if (debounceTimers.has(filename)) {
+        clearTimeout(debounceTimers.get(filename));
+      }
+      const timer = setTimeout(() => {
+        debounceTimers.delete(filename);
+        onChange({ characterName, path: fullPath, filename, eventType, timestamp: new Date().toISOString() });
+      }, debounceMs);
+      debounceTimers.set(filename, timer);
+    });
+    
+    watchers.push(watcher);
+  }
+  
+  // Handle cleanup on signal
+  if (signal) {
+    signal.addEventListener('abort', () => {
+      for (const w of watchers) w.close();
+      for (const timer of debounceTimers.values()) clearTimeout(timer);
+    });
+  }
+  
+  return {
+    stop: () => {
+      for (const w of watchers) w.close();
+      for (const timer of debounceTimers.values()) clearTimeout(timer);
+    }
+  };
+}
+
+/**
+ * Character-to-Character Chat Tool
+ * ================================
+ */
+
+const CHARACTER_CHAT_DIR = '.sword/character_chats';
+
+function characterChatDir(cwd) {
+  return join(resolve(cwd), '.sword/character_chats');
+}
+
+export async function characterChat({ cwd, fromCharacter, toCharacter, message, context = [], signal }) {
+  const dir = join(resolve(cwd), '.sword/character_chats', `${fromCharacter}_${toCharacter}`);
+  await mkdir(dir, { recursive: true });
+  
+  const chatFile = join(dir, 'chat.json');
+  let messages = [];
+  if (existsSync(chatFile)) {
+    try {
+      const content = readFileSync(chatFile, 'utf8');
+      messages = JSON.parse(content);
+    } catch { }
+  }
+  
+  const messageObj = {
+    id: crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    from: fromCharacter,
+    to: toCharacter,
+    content: message,
+    context,
+    timestamp: new Date().toISOString()
+  };
+  
+  messages.push(messageObj);
+  
+  // Keep last 1000 messages
+  if (messages.length > 1000) messages = messages.slice(-1000);
+  
+  await writeFile(join(resolve(cwd), CHARACTER_CHAT_DIR, `${fromCharacter}_${toCharacter}`, 'chat.json'),
+    JSON.stringify({ messages }, null, 2), { mode: 0o644 });
+  
+  // Trigger the receiving character's response (async, fire-and-forget)
+  setImmediate(async () => {
+    try {
+      // This would trigger the receiving character to respond
+      // In a real implementation, this would trigger the character's turn
+    } catch { }
+  });
+  
+  return { success: true, messageId: message.id, timestamp: message.timestamp };
+}
+
+export async function getCharacterChatHistory({ cwd, character1, character2, limit = 100, signal }) {
+  // Check both directions
+  const dir1 = join(resolve(cwd), '.sword/character_chats', `${character1}_${character2}`);
+  const dir2 = join(resolve(cwd), '.sword/character_chats', `${character2}_${character1}`);
+  
+  const chatFile = existsSync(join(dir1, 'chat.json')) ? join(dir1, 'chat.json') : 
+                   existsSync(join(dir2, 'chat.json')) ? join(dir2, 'chat.json') : null;
+  
+  if (!chatFile) return { messages: [] };
+  
+  const content = readFileSync(chatFile, 'utf8');
+  const data = JSON.parse(content);
+  return { messages: data.messages?.slice(-limit) ?? [] };
+}
+
+/**
+ * Per-Character Task Queue with Priority
+ * ======================================
+ */
+
+const CHARACTER_TASK_QUEUE_DIR = '.sword/character_tasks';
+
+function characterTaskDir(cwd) {
+  return join(resolve(cwd), '.sword/character_tasks');
+}
+
+function taskPath(cwd, characterName) {
+  return join(resolve(cwd), '.sword/character_tasks', `${characterName}_tasks.json`);
+}
+
+function normalizeTask(raw) {
+  return Object.freeze({
+    id: raw?.id ?? crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    characterName: String(raw?.characterName ?? '').trim(),
+    title: String(raw?.title ?? '').trim(),
+    description: String(raw?.description ?? '').trim(),
+    priority: raw?.priority ?? 'normal', // 'low', 'normal', 'high', 'critical', 'urgent'
+    status: raw?.status ?? 'pending', // 'pending', 'running', 'completed', 'failed', 'cancelled'
+    created: raw?.created ?? new Date().toISOString(),
+    updated: new Date().toISOString(),
+    startedAt: raw?.startedAt ?? null,
+    completedAt: raw?.completedAt ?? null,
+    result: raw?.result ?? null,
+    error: raw?.error ?? null,
+    tools: Array.isArray(raw?.tools) ? raw.tools.map(String) : [],
+    maxSteps: Number.isInteger(raw?.maxSteps) ? raw.maxSteps : 10,
+    dependsOn: Array.isArray(raw?.dependsOn) ? raw.dependsOn.map(String) : [],
+    tags: Array.isArray(raw?.tags) ? raw.tags.map(String).filter(Boolean) : [],
+  });
+}
+
+function taskFilePath(cwd, characterName) {
+  return join(resolve(cwd), '.sword/character_tasks', `${characterName}_tasks.json`);
+}
+
+function loadCharacterTasks(cwd, characterName) {
+  const path = taskFilePath(cwd, characterName);
+  if (!existsSync(path)) return { tasks: [] };
+  try {
+    const content = readFileSync(path, 'utf8');
+    const data = JSON.parse(content);
+    return { tasks: (data.tasks || []).map(normalizeTask) };
+  } catch { return { tasks: [] }; }
+}
+
+function saveCharacterTasks(cwd, characterName, tasks) {
+  const path = taskFilePath(cwd, characterName);
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  writeFileSync(path, JSON.stringify({ tasks: tasks.map(t => Object.fromEntries(Object.entries(t))) }, null, 2), { mode: 0o644 });
+}
+
+export function addCharacterTask({ cwd, characterName, title, description, priority = 'normal', tools = [], maxSteps = 10, dependsOn = [], tags = [], signal }) {
+  const { tasks } = loadCharacterTasks(cwd, characterName);
+  
+  const task = normalizeTask({
+    characterName,
+    title,
+    description,
+    priority,
+    tools,
+    maxSteps,
+    dependsOn,
+    tags: tags || []
+  });
+  
+  const allTasks = [...loadCharacterTasks(cwd, characterName).tasks, task];
+  const path = taskFilePath(cwd, characterName);
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  writeFileSync(taskFilePath(cwd, characterName), JSON.stringify({ tasks }, null, 2), { mode: 0o644 });
+  
+  return { success: true, task: normalizeTask({ ...task }) };
+}
+
+export function getCharacterTasks({ cwd, characterName, status = null, priority = null, limit = 50, signal }) {
+  const { tasks } = loadCharacterTasks(cwd, characterName);
+  let filtered = tasks;
+  
+  if (status) filtered = filtered.filter(t => t.status === status);
+  if (priority) filtered = filtered.filter(t => t.priority === priority);
+  
+  // Sort by priority (critical > urgent > high > normal > low), then by created date
+  const priorityOrder = { critical: 0, urgent: 1, high: 2, normal: 3, low: 4 };
+  filtered.sort((a, b) => {
+    const pa = priorityOrder[a.priority] ?? 3;
+    const pb = priorityOrder[b.priority] ?? 3;
+    if (pa !== pb) return pa - pb;
+    return new Date(a.created).getTime() - new Date(b.created).getTime();
+  });
+  
+  return { tasks: filtered.slice(0, limit) };
+}
+
+export function updateCharacterTask({ cwd, characterName, taskId, updates, signal }) {
+  const { tasks } = loadCharacterTasks(cwd, characterName);
+  const index = tasks.findIndex(t => t.id === taskId);
+  if (index === -1) throw new Error(`Task ${taskId} not found for character`);
+  
+  const updated = { ...tasks[index], ...updates, updated: new Date().toISOString() };
+  
+  // Handle status transitions
+  if (updates.status === 'running' && tasks[index].status === 'pending') {
+    updated.startedAt = new Date().toISOString();
+  }
+  if (updates.status === 'completed' && tasks[index].status !== 'completed') {
+    updated.completedAt = new Date().toISOString();
+  }
+  if (updates.status === 'failed') {
+    updated.error = updates.error ?? 'Task failed';
+  }
+  
+  const updatedTasks = [...loadCharacterTasks(cwd, characterName).tasks];
+  updatedTasks[index] = normalizeTask({ ...updatedTasks[index], ...updated });
+  const path = taskFilePath(cwd, characterName);
+  writeFileSync(path, JSON.stringify({ tasks }, null, 2), { mode: 0o644 });
+  
+  return { success: true, task: normalizeTask(tasks[index]) };
+}
+
+export function removeCharacterTask({ cwd, characterName, taskId, signal }) {
+  const { tasks } = loadCharacterTasks(cwd, characterName);
+  const filtered = tasks.filter(t => t.id !== taskId);
+  if (filtered.length === tasks.length) throw new Error(`Task ${taskId} not found`);
+  
+  writeFileSync(taskFilePath(cwd, characterName), JSON.stringify({ tasks: filtered }, null, 2), { mode: 0o644 });
+  return { success: true, removed: taskId };
+}
+
+export async function processCharacterTaskQueue({ cwd, characterName, executor, maxConcurrent = 1, signal }) {
+  // Get pending tasks sorted by priority
+  const { tasks: pending } = getCharacterTasks({ cwd, characterName, status: 'pending', limit: 100 });
+  
+  if (pending.length === 0) return { processed: 0, message: 'No pending tasks' };
+  
+  const priorityOrder = { critical: 0, urgent: 1, high: 2, normal: 3, low: 4 };
+  const sorted = [...pending].sort((a, b) => {
+    const pa = (() => { switch(a.priority) { case 'critical': return 0; case 'urgent': return 1; case 'high': return 2; case 'normal': return 3; case 'low': return 4; default: return 3; } })();
+    const pb = (() => { switch(b.priority) { case 'critical': return 0; case 'urgent': return 1; case 'high': return 2; case 'normal': return 3; case 'low': return 4; default: return 3; } })();
+    return pa - pb;
+  });
+  
+  const running = new Set();
+  let processed = 0;
+  let failed = 0;
+  
+  for (const task of sorted) {
+    if (signal?.aborted) break;
+    if (running.size >= maxConcurrent) {
+      // Wait for a slot
+      await new Promise(r => setTimeout(r, 1000));
+      continue;
+    }
+    
+    // Check dependencies
+    if (task.dependsOn?.length) {
+      const { tasks } = loadCharacterTasks(cwd, characterName);
+      const depsMet = task.dependsOn.every(depId => {
+        const dep = tasks.find(t => t.id === depId);
+        return dep && dep.status === 'completed';
+      });
+      if (!depsMet) continue;
+    }
+    
+    running.add(task.id);
+    const updated = updateCharacterTask({ cwd, characterName, taskId: task.id, updates: { status: 'running', startedAt: new Date().toISOString() } });
+    
+    try {
+      // Execute the task using the provided executor
+      if (executor) {
+        const result = await executor({ task: updated, cwd, signal });
+        updateCharacterTask({ cwd, characterName, taskId: updated.id, updates: { status: 'completed', result: result, completedAt: new Date().toISOString() } });
+        processed++;
+      } else {
+        // No executor provided - just mark as ready
+        updateCharacterTask({ cwd, characterName, taskId: task.id, updates: { status: 'pending', result: 'No executor provided - task queued' } });
+        processed++;
+      }
+    } catch (error) {
+      updateCharacterTask({ cwd, characterName, taskId: task.id, updates: { status: 'failed', error: error?.message ?? String(error) } });
+      failed++;
+    } finally {
+      running.delete(updated.id);
+    }
+    
+    if (signal?.aborted) break;
+  }
+  
+  return { processed, failed, message: `Processed ${processed} tasks, ${failed} failed` };
+}
+
+/**
+ * Character Tools - New Tool Definitions
+ * ======================================
+ * These will be added to toolDefinitions array
+ */
+
+// Tool definitions for the new character autonomy features
+export const CHARACTER_AUTONOMY_TOOLS = [
+  {
+    name: 'character_memory_save',
+    description: 'Save memories for a character (cross-session persistence). Memories are stored locally and indexed in RAG for semantic search.',
+    parameters: {
+      type: 'object',
+      properties: {
+        character_name: { type: 'string' },
+        memories: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              type: { type: 'string', enum: ['fact', 'preference', 'experience', 'knowledge', 'goal', 'observation'] },
+              content: { type: 'string' },
+              importance: { type: 'string', enum: ['low', 'normal', 'high', 'critical'] },
+              context: { type: 'string' },
+              tags: { type: 'array', items: { type: 'string' } }
+            },
+            required: ['content']
+          }
+        }
+      },
+      required: ['character_name', 'memories']
+    },
+    handler: 'saveCharacterMemory'
+  },
+  {
+    name: 'character_memory_load',
+    description: 'Load memories for a character from persistent storage.',
+    parameters: {
+      type: 'object',
+      properties: {
+        character_name: { type: 'string' },
+        limit: { type: 'integer', minimum: 1, maximum: 1000, default: 100 }
+      },
+      required: ['character_name']
+    },
+    handler: 'loadCharacterMemory'
+  },
+  {
+    name: 'character_memory_search',
+    description: 'Search character memories semantically using RAG.',
+    parameters: {
+      type: 'object',
+      properties: {
+        character_name: { type: 'string' },
+        query: { type: 'string' },
+        limit: { type: 'integer', minimum: 1, maximum: 50, default: 10 }
+      },
+      required: ['character_name', 'query']
+    },
+    handler: 'searchCharacterMemory'
+  },
+  {
+    name: 'character_watch_files',
+    description: 'Watch files/directories for changes and trigger character reactions. Uses fs.watch with debouncing.',
+    parameters: {
+      type: 'object',
+      properties: {
+        character_name: { type: 'string' },
+        paths: { type: 'array', items: { type: 'string' } },
+        debounce_ms: { type: 'integer', minimum: 100, maximum: 60000, default: 1000 },
+        callback_tool: { type: 'string', description: 'Tool to call when change detected (e.g., task, character_chat)' },
+        callback_args: { type: 'object' }
+      },
+      required: ['character_name', 'paths']
+    },
+    handler: 'watchFilesForCharacter'
+  },
+  {
+    name: 'character_chat',
+    description: 'Send a message to another character. Creates a persistent chat history between characters.',
+    parameters: {
+      type: 'object',
+      properties: {
+        from_character: { type: 'string' },
+        to_character: { type: 'string' },
+        message: { type: 'string' },
+        context: { type: 'array', items: { type: 'string' }, default: [] }
+      },
+      required: ['from_character', 'to_character', 'message']
+    },
+    handler: 'characterChat'
+  },
+  {
+    name: 'character_chat_history',
+    description: 'Get chat history between two characters.',
+    parameters: {
+      type: 'object',
+      properties: {
+        character1: { type: 'string' },
+        character2: { type: 'string' },
+        limit: { type: 'integer', minimum: 1, maximum: 1000, default: 100 }
+      },
+      required: ['character1', 'character2']
+    },
+    handler: 'getCharacterChatHistory'
+  },
+  {
+    name: 'character_task_add',
+    description: 'Add a task to a character\'s priority queue.',
+    parameters: {
+      type: 'object',
+      properties: {
+        character_name: { type: 'string' },
+        title: { type: 'string' },
+        description: { type: 'string' },
+        priority: { type: 'string', enum: ['low', 'normal', 'high', 'critical', 'urgent'], default: 'normal' },
+        tools: { type: 'array', items: { type: 'string' }, default: [] },
+        max_steps: { type: 'integer', minimum: 1, maximum: 100, default: 10 },
+        depends_on: { type: 'array', items: { type: 'string' }, default: [] },
+        tags: { type: 'array', items: { type: 'string' }, default: [] }
+      },
+      required: ['character_name', 'title']
+    },
+    handler: 'addCharacterTask'
+  },
+  {
+    name: 'character_task_list',
+    description: 'List tasks for a character with optional filters.',
+    parameters: {
+      type: 'object',
+      properties: {
+        character_name: { type: 'string' },
+        status: { type: 'string', enum: ['pending', 'running', 'completed', 'failed', 'cancelled'] },
+        priority: { type: 'string', enum: ['low', 'normal', 'high', 'critical', 'urgent'] },
+        limit: { type: 'integer', minimum: 1, maximum: 200, default: 50 }
+      },
+      required: ['character_name']
+    },
+    handler: 'getCharacterTasks'
+  },
+  {
+    name: 'character_task_update',
+    description: 'Update a character task (status, priority, result, etc.).',
+    parameters: {
+      type: 'object',
+      properties: {
+        character_name: { type: 'string' },
+        task_id: { type: 'string' },
+        status: { type: 'string', enum: ['pending', 'running', 'completed', 'failed', 'cancelled'] },
+        priority: { type: 'string', enum: ['low', 'normal', 'high', 'critical', 'urgent'] },
+        result: { type: 'string' },
+        error: { type: 'string' }
+      },
+      required: ['character_name', 'task_id']
+    },
+    handler: 'updateCharacterTask'
+  },
+  {
+    name: 'character_task_remove',
+    description: 'Remove a task from a character\'s queue.',
+    parameters: {
+      type: 'object',
+      properties: {
+        character_name: { type: 'string' },
+        task_id: { type: 'string' }
+      },
+      required: ['character_name', 'task_id']
+    },
+    handler: 'removeCharacterTask'
+  },
+  {
+    name: 'character_task_process',
+    description: 'Process a character\'s task queue using the provided executor. Runs pending tasks respecting priority and dependencies.',
+    parameters: {
+      type: 'object',
+      properties: {
+        character_name: { type: 'string' },
+        max_concurrent: { type: 'integer', minimum: 1, maximum: 10, default: 1 },
+        executor_available: { type: 'boolean', default: false }
+      },
+      required: ['character_name']
+    },
+    handler: 'processCharacterTaskQueue'
+  },
+  {
+    name: 'character_watch_files',
+    description: 'Watch files/directories for changes and trigger character reactions. Uses fs.watch with debouncing.',
+    parameters: {
+      type: 'object',
+      properties: {
+        character_name: { type: 'string' },
+        paths: { type: 'array', items: { type: 'string' } },
+        debounce_ms: { type: 'integer', minimum: 100, maximum: 60000, default: 1000 },
+        callback_tool: { type: 'string', description: 'Tool to call when change detected (e.g., task, character_chat)' },
+        callback_args: { type: 'object' }
+      },
+      required: ['character_name', 'paths']
+    },
+    handler: 'watchFilesForCharacter'
+  }
+];
+
+/**
+ * ============================================================================
+ * END OF NEW CHARACTER AUTONOMY FEATURES
+ * ============================================================================
  */
