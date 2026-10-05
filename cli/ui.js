@@ -286,9 +286,28 @@ export function banner(opts) {
 let isTUI = false;
 let currentText = '';
 let barInterval = null;
-let frame = 0;
-const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+let tick = 0;
 let isThinking = false;
+let currentFace = '(•_•)';
+
+const thinkingFaces = ['(O_o)', '(o_O)'];
+const idleFaces = ['(•_•)', '(-_-)', '(<_<)', '(>_>)', '(^_-)', '(>_<)'];
+
+function updateFace() {
+  if (isThinking) {
+    currentFace = chalk.cyan(thinkingFaces[(Math.floor(tick / 4)) % thinkingFaces.length]);
+  } else {
+    if (tick % 25 === 0) {
+      currentFace = Math.random() > 0.4 ? idleFaces[Math.floor(Math.random() * idleFaces.length)] : '(•_•)';
+    } else if (currentFace === '(-_-)' && tick % 25 === 2) {
+      currentFace = '(•_•)'; // quick blink
+    } else if (currentFace === '(^_-)' && tick % 25 === 4) {
+      currentFace = '(•_•)'; // quick wink
+    } else if (currentFace === '(>_<)' && tick % 25 === 6) {
+      currentFace = '(•_•)'; // quick wince
+    }
+  }
+}
 
 function drawBottomBar() {
   if (!isTUI || !process.stderr.isTTY) return;
@@ -296,8 +315,7 @@ function drawBottomBar() {
   const cols = process.stderr.columns;
   if (!rows || !cols) return;
   
-  const spinner = isThinking ? chalk.cyan(frames[frame % frames.length]) + ' ' : '';
-  const text = ` ${spinner}${currentText} `;
+  const text = ` ${currentFace} ${currentText} `;
   // pad to full width
   const visibleLength = text.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').length;
   const padded = text + ' '.repeat(Math.max(0, cols - visibleLength));
@@ -320,11 +338,10 @@ export function initBottomBar() {
   });
   
   barInterval = setInterval(() => {
-    if (isThinking) {
-      frame++;
-      drawBottomBar();
-    }
-  }, 80);
+    tick++;
+    updateFace();
+    drawBottomBar();
+  }, 100);
 }
 
 export function setBottomBar(text, thinking = false) {
