@@ -286,7 +286,7 @@ export default function SettingsPage() {
             {/* Gmail Quick Setup */}
             <Card className="border-blue-500/30 bg-blue-500/5">
               <CardHeader>
-                <CardTitle className="flex items-center gap-2"><Badge variant="outline" className="bg-green-500/10 text-green-600">Gmail</CardTitle> Quick Setup</CardTitle>
+                <CardTitle className="flex items-center gap-2"><Badge variant="outline" className="bg-green-500/10 text-green-600">Gmail</Badge> Quick Setup</CardTitle>
                 <p className="text-xs text-muted-foreground">Use Google App Password (not your main password). Enable 2FA first, then create an App Password at <a href="https://myaccount.google.com/apppasswords" target="_blank" className="underline">myaccount.google.com/apppasswords</a>.</p>
               </CardHeader>
               <CardContent className="space-y-2">
@@ -391,8 +391,3 @@ export default function SettingsPage() {
     </div>
   )
 }
-
-function SettingsPage() {
-  return <SettingsPage />
-}
-export default SettingsPage
