@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Allow: /docs/
+Allow: /api/
+
+Sitemap: https://your-website-domain.com/sitemap.xml
