@@ -389,15 +389,18 @@ async function main() {
           for (const p of custom) console.error(`  custom  ${p.name} -> ${p.baseUrl} (model: ${p.model || 'default'})`);
         }
         console.error(`\nModels:\n  current: ${provider.model}\n  config: --model, SWORD_MODEL, or backend auto-routing\n\nUsage: /provider add <name> <baseUrl> <apiKey> <model>\n       /provider remove <id>\n`);
-      } else if (sub === 'add' && parts[1] && parts[2] && parts[3]) {
-        const name = parts[1];
-        const baseUrl = parts[2];
-        const apiKey = parts[3];
-        const model = parts[4] || '';
+      } else if (sub === 'add' && parts[2] && parts[3] && parts[4]) {
+        const name = parts[2];
+        const baseUrl = parts[3];
+        const apiKey = parts[4];
+        const model = parts[5] || '';
         addProvider({ name, baseUrl, apiKey, model });
         console.error(`Provider added: ${name}`);
-      } else if (sub === 'remove' && parts[1]) {
-        removeProvider(parts[1]);
+      } else if (sub === 'remove' && parts[2]) {
+        const target = parts[2];
+        const existing = listProviders();
+        const found = existing.find(p => p.id === target || p.name === target);
+        removeProvider(found ? found.id : target);
         console.error(`Provider removed`);
       } else {
         console.error('Usage: /provider list | add <name> <baseUrl> <apiKey> <model> | remove <id>');

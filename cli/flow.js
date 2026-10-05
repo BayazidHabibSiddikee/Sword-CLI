@@ -310,6 +310,8 @@ async function main() {
     useG4f ? `\n\n${g4fDegradedNotice()}` : '',   // G3: honest about a tool-less provider
   ].join('');
   const system = { role: 'system', content: buildSystemPrompt(cwd, shared?.mode || values.mode, values.persona || null) + systemExtras };
+  let activeCharacter = values.persona || 'default';
+  let teamMembers = [...TEAM_CHARACTERS];
   const provider = { ...config, model: values.model || shared?.model || selectedModel };
   // ── MCP remote tools (Phase 4) ─────────────────────────────────────────────
   // Load config, connect to each enabled server ONCE to enumerate its tools, and
@@ -612,8 +614,8 @@ async function main() {
         const maxPerAgent = 1500;
         for (let round = 0; round < teamRounds; round++) {
         // Cycle through registered character agents
-        for (let i = 0; i < TEAM_CHARACTERS.length; i++) {
-          const charName = TEAM_CHARACTERS[i];
+        for (let i = 0; i < teamMembers.length; i++) {
+          const charName = teamMembers[i];
           try {
             const charPrompt = await brainPrompt(charName) || `You are ${charName}. Contribute your perspective concisely.`;
             const tallyNote = lastAggregate ? `\n\nCurrent vote tally after round ${round}: ${formatTeamSummary(lastAggregate)}.` : '';
@@ -830,13 +832,54 @@ async function main() {
         console.error(`  ${chalk.dim('skills:')}    ${installed.length ? installed.map(s => s.name).join(', ') : 'no verified project skills'}`);
       } catch { /* optional subsystem; never break /status */ }
       if (teamMode) {
-        console.error(`  ${chalk.dim('team:')}      ON (${TEAM_CHARACTERS.length} agents, ${teamRounds} round(s))${lastTeamAggregate?.winner ? `; consensus: ${lastTeamAggregate.winner}` : ''}`);
+        console.error(`  ${chalk.dim('team:')}      ON (${teamMembers.length} agents, ${teamRounds} round(s))${lastTeamAggregate?.winner ? `; consensus: ${lastTeamAggregate.winner}` : ''}`);
       }
       return;
     }
-    if (line === '/team') {
-      teamMode = !teamMode;
-      console.error(chalk.cyan(`[System] Team mode is now ${teamMode ? 'ON' : 'OFF'}`));
+    if (line.startsWith('/team')) {
+      const parts = line.split(/\s+/);
+      const sub = parts[1]?.toLowerCase();
+      if (!sub) {
+        teamMode = !teamMode;
+        console.error(chalk.cyan(`[System] Team mode is now ${teamMode ? 'ON' : 'OFF'}`));
+        return;
+      }
+      if (sub === 'list' || sub === 'ls') {
+        console.error(`\nTeam configuration:`);
+        console.error(`  Mode:    ${teamMode ? 'ON' : 'OFF'}`);
+        console.error(`  Rounds:  ${teamRounds}`);
+        console.error(`  Members (${teamMembers.length}):`);
+        for (const m of teamMembers) console.error(`    - ${m}`);
+        if (lastTeamAggregate?.winner) {
+          console.error(`  Consensus winner: ${lastTeamAggregate.winner}`);
+        }
+        console.error('');
+        return;
+      }
+      if (sub === 'add') {
+        const char = parts[2]?.toLowerCase()?.trim();
+        if (!char) { console.error('Usage: /team add <character>'); return; }
+        if (teamMembers.includes(char)) {
+          console.error(`Character "${char}" is already in the team.`);
+        } else {
+          teamMembers.push(char);
+          console.error(`Added "${char}" to team (${teamMembers.length} agents).`);
+        }
+        return;
+      }
+      if (sub === 'remove' || sub === 'rm') {
+        const char = parts[2]?.toLowerCase()?.trim();
+        if (!char) { console.error('Usage: /team remove <character>'); return; }
+        const idx = teamMembers.indexOf(char);
+        if (idx === -1) {
+          console.error(`Character "${char}" is not in the team.`);
+        } else {
+          teamMembers.splice(idx, 1);
+          console.error(`Removed "${char}" from team (${teamMembers.length} agents).`);
+        }
+        return;
+      }
+      console.error('Usage: /team [list | add <character> | remove <character>]');
       return;
     }
     if (line === '/clear') {
@@ -854,7 +897,7 @@ async function main() {
         const custom = listProviders();
         console.error(`\nProviders:\n  local   ${config.url || 'http://127.0.0.1:3101/v1'}\n  g4f     anonymous fallback\n  remote  SWORDCLI_BASE_URL / OPENAI_BASE_URL`);
         if (custom.length) {
-          for (const p of custom) console.error(`  custom  ${p.name} -> ${p.baseUrl} (model: ${p.model || 'default'})`);
+          for (const p of custom) console.error(`  custom  [${p.id || p.name}] ${p.name} -> ${p.baseUrl} (model: ${p.model || 'default'})`);
         }
         console.error(`\nModels:\n  current: ${provider.model}\n  config: --model, SWORD_MODEL, or backend auto-routing\n\nUsage: /provider add <name> <baseUrl> <apiKey> <model>\n       /provider remove <id>\n`);
       } else if (sub === 'add' && parts[2] && parts[3] && parts[4]) {
@@ -864,16 +907,40 @@ async function main() {
         const model = parts[5] || '';
         addProvider({ name, baseUrl, apiKey, model });
         console.error(`Provider added: ${name}`);
-      } else if (sub === 'remove' && parts[1]) {
-        removeProvider(parts[1]);
+      } else if (sub === 'remove' && parts[2]) {
+        const target = parts[2];
+        const existing = listProviders();
+        const found = existing.find(p => p.id === target || p.name === target);
+        removeProvider(found ? found.id : target);
         console.error(`Provider removed`);
       } else {
         console.error('Usage: /provider list | add <name> <baseUrl> <apiKey> <model> | remove <id>');
       }
       return;
     }
-    if (line === '/models') {
-      console.error(`\nModels:\n  current: ${provider.model}\n  config: --model, SWORD_MODEL, or backend auto-routing\n`);
+    if (line === '/models' || line.startsWith('/model')) {
+      const parts = line.split(/\s+/);
+      const targetModel = line === '/models' ? '' : parts.slice(1).join(' ').trim();
+      if (targetModel) {
+        provider.model = targetModel;
+        if (shared) shared.model = targetModel;
+        console.error(`Active model switched to: ${targetModel}`);
+      } else {
+        console.error(`\nModels:`);
+        console.error(`  current: ${provider.model}`);
+        console.error(`  config:  --model, SWORD_MODEL, or backend auto-routing`);
+        const custom = listProviders();
+        if (custom.length) {
+          console.error(`  custom providers:`);
+          for (const p of custom) {
+            if (p.model) console.error(`    - ${p.model} (${p.name})`);
+          }
+        }
+        console.error(`  available options:`);
+        console.error(`    - ${provider.model} (current)`);
+        console.error(`    - qwen2.5:1.5b\n    - qwen2.5-coder:7b\n    - gpt-4o\n    - claude-3-5-sonnet`);
+        console.error(`\nUsage: /model <name>\n`);
+      }
       return;
     }
     if (line.startsWith('/rag ')) {
@@ -921,42 +988,6 @@ async function main() {
       }
       return;
     }
-    if (line.startsWith('/providers') || line.startsWith('/provider')) {
-      const parts = line.split(/\s+/);
-      const sub = parts[1] || '';
-      const { listProviders, addProvider, removeProvider } = await import('./providers.js');
-      if (!sub || sub === 'list' || sub === 'ls') {
-        const custom = listProviders();
-        console.error(`
-Providers:
-  local   ${config.url || 'http://127.0.0.1:3101/v1'}
-  g4f     anonymous fallback
-  remote  SWORDCLI_BASE_URL / OPENAI_BASE_URL`);
-        if (custom.length) {
-          for (const p of custom) console.error(`  custom  ${p.name} -> ${p.baseUrl} (model: ${p.model || 'default'})`);
-        }
-        console.error(`
-Models:
-  current: ${provider.model}
-  config: --model, SWORD_MODEL, or backend auto-routing
-
-Usage: /provider add <name> <baseUrl> <apiKey> <model>
-       /provider remove <id>`);
-      } else if (sub === 'add' && parts[1] && parts[2] && parts[3]) {
-        const name = parts[1];
-        const baseUrl = parts[2];
-        const apiKey = parts[3];
-        const model = parts[4] || '';
-        addProvider({ name, baseUrl, apiKey, model });
-        console.error(`Provider added: ${name}`);
-      } else if (sub === 'remove' && parts[1]) {
-        removeProvider(parts[1]);
-        console.error('Provider removed');
-      } else {
-        console.error('Usage: /provider');
-      }
-      return;
-    }
 
     if (line === '/') {
       console.log('\nAvailable commands:\n' +
@@ -1000,6 +1031,123 @@ Usage: /provider add <name> <baseUrl> <apiKey> <model>
       // let it reason about files that no longer exist.
       history.length = 0; // in place; the binding is const
       console.error('Conversation history cleared; the agent must re-read the project.');
+      return;
+    }
+
+    if (line.startsWith('/session')) {
+      const activeId = shared ? shared.id : values.session ? values.session : '(default in-memory)';
+      const spend = usage.session();
+      const turns = spend.turns || history.filter(m => m.role === 'user').length;
+      const tokens = `${spend.tokens_in} in / ${spend.tokens_out} out`;
+      const cost = spend.cost_usd ? `, $${spend.cost_usd.toFixed(4)}` : '';
+      let saved = [];
+      try {
+        const dir = join(cwd, '.flow');
+        const entries = await readdir(dir).catch(() => []);
+        for (const e of entries) {
+          if (e.endsWith('.json') && e !== 'providers.json') {
+            saved.push(e.replace(/\.json$/, ''));
+          }
+        }
+      } catch {}
+      console.error(`\nSession Information:`);
+      console.error(`  Active Session: ${activeId}`);
+      console.error(`  Turn Count:     ${turns} turn(s) (${history.length} messages)`);
+      console.error(`  Token Usage:    ${tokens}${cost}`);
+      if (saved.length > 0) {
+        console.error(`  Saved Sessions: ${saved.join(', ')}`);
+      } else {
+        console.error(`  Saved Sessions: (none)`);
+      }
+      console.error('');
+      return;
+    }
+
+    if (line.startsWith('/history')) {
+      if (!history.length) {
+        console.error('No conversation history in current session.');
+        return;
+      }
+      const maxToShow = 20;
+      const startIdx = Math.max(0, history.length - maxToShow);
+      console.error(`\nConversation History (showing last ${history.length - startIdx} of ${history.length} messages):`);
+      for (let i = startIdx; i < history.length; i++) {
+        const m = history[i];
+        const roleLabel = m.role === 'user' ? chalk.cyan('[User]') : m.role === 'assistant' ? chalk.green('[Assistant]') : chalk.yellow(`[${m.role}]`);
+        const text = (m.content || '').trim();
+        const preview = text.length > 300 ? text.slice(0, 300) + '...' : text;
+        console.error(`  ${roleLabel} ${preview.replace(/\n/g, '\n    ')}`);
+      }
+      console.error('');
+      return;
+    }
+
+    if (line.startsWith('/brain')) {
+      const projected = projectRequest({ messages: history, tools: toolDefs });
+      const percent = Math.min(100, Math.round((projected.tokens / contextBudgetTokens) * 100));
+      let ragStats = null;
+      try { ragStats = ragDb.getStats(); } catch {}
+      console.error(`\nWorking Memory & Brain Status:`);
+      console.error(`  Persona:       ${activeCharacter || values.persona || 'default (coding assistant)'}`);
+      console.error(`  Mode:          ${values.mode}`);
+      console.error(`  Context:       ${projected.tokens} / ${contextBudgetTokens} tokens (${percent}%)`);
+      console.error(`  Memory:        ${history.length} message(s) active, ${archivedCount} turn(s) archived`);
+      if (ragStats) {
+        console.error(`  Knowledge Base:${ragStats.k} knowledge items, ${ragStats.q} wisdom quotes`);
+      }
+      console.error(`  Tools/Skills:  ${toolDefs.length} tool(s) in context`);
+      console.error('');
+      return;
+    }
+
+    if (line.startsWith('/character') || line.startsWith('/char')) {
+      const parts = line.split(/\s+/);
+      const targetChar = parts.slice(1).join(' ').trim().toLowerCase();
+      if (!targetChar) {
+        console.error(`\nActive character: ${activeCharacter || values.persona || 'default'}`);
+        console.error(`Available characters:`);
+        console.error(`  - default (neutral coding assistant)`);
+        for (const c of TEAM_CHARACTERS) console.error(`  - ${c}`);
+        console.error(`\nUsage: /character <name>\n`);
+        return;
+      }
+      if (targetChar === 'default' || targetChar === 'none' || targetChar === 'sword') {
+        activeCharacter = 'default';
+        system.content = buildSystemPrompt(cwd, shared?.mode || values.mode, null) + systemExtras;
+        console.error('Active character switched to: default (neutral coding assistant)');
+        return;
+      }
+      if (TEAM_CHARACTERS.includes(targetChar) || KNOWN_PERSONAS.includes(targetChar)) {
+        activeCharacter = targetChar;
+        const charPrompt = await brainPrompt(targetChar);
+        if (charPrompt) {
+          system.content = `${charPrompt}\n\nProject directory: ${cwd}\n${buildSystemPrompt(cwd, shared?.mode || values.mode, null)}${systemExtras}`;
+        } else if (targetChar === 'izuku') {
+          system.content = buildSystemPrompt(cwd, shared?.mode || values.mode, 'izuku') + systemExtras;
+        }
+        console.error(`Active character switched to: ${targetChar}`);
+        return;
+      }
+      console.error(`Unknown character: "${targetChar}". Available: default, ${TEAM_CHARACTERS.join(', ')}`);
+      return;
+    }
+
+    if (line.startsWith('/routine')) {
+      const parts = line.split(/\s+/);
+      const sub = parts[1];
+      if (!sub) {
+        await runRoutineCommand(['routine', 'list', '--cwd', cwd]);
+        return;
+      }
+      if (['list', 'ls', 'add', 'remove', 'rm', 'schedule', 'run', 'help'].includes(sub)) {
+        const routineArgs = ['routine', ...parts.slice(1)];
+        if (!line.includes('--cwd')) routineArgs.push('--cwd', cwd);
+        await runRoutineCommand(routineArgs);
+        return;
+      }
+      const routineArgs = ['routine', 'run', sub];
+      if (!line.includes('--cwd')) routineArgs.push('--cwd', cwd);
+      await runRoutineCommand(routineArgs);
       return;
     }
 
