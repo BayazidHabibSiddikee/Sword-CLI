@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
 import { realpath, stat, readdir } from 'node:fs/promises';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import chalk from 'chalk';
@@ -12,7 +13,7 @@ import { detectTestCommand } from './testCommand.js';
 import { discoverSkills, buildCompactIndex } from './externalSkills.js';
 import { configureSwordBackend, readLocalUnifiedKey } from './backend.js';
 import { createSharedClient, recentContext } from './shared.js';
-import { resolveModel } from './model.js';
+import { resolveModel, listModels } from './model.js';
 import { RagEngine } from './brain/rag.js';
 import { sessions } from './skills/sessions.js';
 import { loadMcpConfig } from './mcpConfig.js';
@@ -141,6 +142,83 @@ async function brainPrompt(charName) {
   return mod.SYSTEM_PROMPT || null;
 }
 
+/** Dynamically resolve character names from characters/ directories, falling back to TEAM_CHARACTERS */
+export function resolveCharacterNames(cwd = process.cwd()) {
+  const names = new Set(TEAM_CHARACTERS);
+  const searchDirs = [
+    join(cwd, 'characters'),
+    join(cwd, '.sword', 'characters'),
+    join(__dirname, '..', 'characters')
+  ];
+  for (const dir of searchDirs) {
+    try {
+      if (existsSync(dir)) {
+        const entries = readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.isFile()) {
+            const base = entry.name.replace(/\.[^.]+$/, '');
+            if (base) names.add(base);
+          } else if (entry.isDirectory()) {
+            names.add(entry.name);
+          }
+        }
+      }
+    } catch { }
+  }
+  return Array.from(names);
+}
+
+/** Build autocompletion entries for readline tab-completion */
+export function buildCompletions(cwd = process.cwd()) {
+  const completions = new Set();
+  // Slash commands
+  const slashCommands = [
+    'help', 'clear', 'status', 'team', 'models', 'provider',
+    'rag', 'web', 'download', 'scrape', 'undo', 'session',
+    'history', 'brain', 'model', 'character', 'exit', 'quit',
+    'routine', 'tasks'
+  ];
+  for (const cmd of slashCommands) completions.add(`/${cmd}`);
+  
+  // Routine subcommands
+  const routineSubs = ['add', 'list', 'remove', 'schedule', 'run', 'help'];
+  for (const sub of routineSubs) completions.add(`/routine ${sub}`);
+  
+  // Team subcommands
+  const teamSubs = ['list', 'add', 'remove'];
+  for (const sub of teamSubs) completions.add(`/team ${sub}`);
+  
+  // Character switching: dynamically resolve character names from characters/
+  try {
+    const chars = resolveCharacterNames(cwd);
+    for (const char of chars) {
+      const name = typeof char === 'string' ? char : char?.name;
+      if (name) completions.add(`/character ${name}`);
+    }
+  } catch { }
+  
+  // Routine names
+  try {
+    const routines = loadRoutines({ cwd });
+    for (const r of routines.routines) {
+      completions.add(`/routine run ${r.name}`);
+      completions.add(`/routine schedule ${r.name}`);
+      completions.add(`/routine remove ${r.name}`);
+    }
+  } catch { }
+  
+  // Model names
+  try {
+    const models = typeof listModels === 'function' ? listModels() : [];
+    for (const m of models) {
+      const name = typeof m === 'string' ? m : (m?.id || m?.name);
+      if (name) completions.add(`/model ${name}`);
+    }
+  } catch { }
+  
+  return Array.from(completions).sort();
+}
+
 const HELP = `SwordCLI — project coding assistant
 Usage: sword [--cwd DIRECTORY] [--prompt TEXT] [--json] [--session NAME]
   --prompt, -p   Run one task (writes and commands denied without a TTY)
@@ -157,6 +235,7 @@ Usage: sword [--cwd DIRECTORY] [--prompt TEXT] [--json] [--session NAME]
   --team         Round-robin team discussion: all 10 agents deliberate, then a writer responds
   --team-rounds N  Deliberation rounds 1..5 (default 1); later rounds see the vote tally
    --json         One-shot JSON output; includes toolsUsed/toolsRan in the response object
+   --version, -v  Print version and exit
    --help, -h     Show this help
 Subcommands:
    sword doctor                      Diagnose provider + tool state; prints exact fix steps
@@ -220,15 +299,38 @@ async function main() {
     if (code !== 0) process.exitCode = code;
     return;
   }
+  if (argv[0] === 'help') {
+    console.log(HELP);
+    return;
+  }
+  if (argv[0] === 'version') {
+    try {
+      const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf8'));
+      console.log(pkg.version || '1.0.0');
+    } catch {
+      console.log('1.0.0');
+    }
+    return;
+  }
   const { values } = parseArgs({ options: {
     prompt: { type: 'string', short: 'p' }, cwd: { type: 'string' },
     model: { type: 'string' }, session: { type: 'string' }, mode: { type: 'string', default: 'coding' },
     persona: { type: 'string' },
     json: { type: 'boolean' }, help: { type: 'boolean', short: 'h' },
+    version: { type: 'boolean', short: 'v' },
     shared: { type: 'boolean' }, local: { type: 'boolean' }, 'shared-session': { type: 'string' }, 'import-session': { type: 'string' },
     team: { type: 'boolean' }, 'team-rounds': { type: 'string', default: '1' }
   } });
   if (values.help) { console.log(HELP); return; }
+  if (values.version) {
+    try {
+      const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf8'));
+      console.log(pkg.version || '1.0.0');
+    } catch {
+      console.log('1.0.0');
+    }
+    return;
+  }
   if (values.json && !values.prompt) throw new Error('--json requires --prompt');
   if (!['coding', 'marketing-video'].includes(values.mode)) throw new Error(`Unknown mode: ${values.mode}`);
   // Only `izuku` has a persona prompt; anything else is not silent — warn and fall
@@ -339,15 +441,25 @@ async function main() {
   // Local, append-only usage accounting (.flow/usage.jsonl, mode 0600). Best-effort:
   // a failed accounting write must never break a turn, so recordTurn is fire-and-forget.
   const usage = createUsageTracker({ cwd, provider: useG4f ? 'g4f' : 'openai-compatible' });
+  // Load session with crash resilience against corrupt, oversized (>1MB), or invalid files.
+  let sessionMessages = [];
+  if (values.session) {
+    try {
+      sessionMessages = await loadSession(cwd, values.session);
+    } catch (err) {
+      console.error(`[sword] Warning: Failed to load session "${values.session}" (${err?.message || err}). Starting a clean session.`);
+      sessionMessages = [];
+    }
+  }
   // `history` is a const binding: every update below mutates the array in place
   // (replaceAll / splice / push) so live aliases keep observing the same array.
-  const history = shared ? shared.messages : values.session ? await loadSession(cwd, values.session) : [];
-  // Merge local --session history so prior turns are visible to the LLM.
+  const history = shared ? shared.messages : sessionMessages;
+  // Merge local --session history into shared backend messages if both are present.
   // Deduplicate by (role, content) so shared backend messages don't double-appear.
-  if (values.session && !shared) {
+  if (values.session && shared && sessionMessages.length > 0) {
     const key = m => `${m.role}:${(m.content || '').slice(0, 120)}`;
     const existing = new Set(history.map(key));
-    for (const m of values.session ? await loadSession(cwd, values.session) : []) {
+    for (const m of sessionMessages) {
       if (!existing.has(key(m))) { history.push(m); existing.add(key(m)); }
     }
   }
@@ -391,59 +503,11 @@ async function main() {
     console.error('\n(To exit, press Ctrl+C again or Ctrl+D)');
   };
   const makeInterface = () => {
-    // Build completions for tab completion
-    const buildCompletions = () => {
-      const completions = new Set();
-      // Slash commands
-      const slashCommands = [
-        'help', 'clear', 'status', 'team', 'models', 'provider',
-        'rag', 'web', 'download', 'scrape', 'undo', 'session',
-        'history', 'brain', 'model', 'character', 'exit', 'quit',
-        'undo', 'routine', 'provider', 'tasks'
-      ];
-      for (const cmd of slashCommands) completions.add(`/${cmd}`);
-      
-      // Routine subcommands
-      const routineSubs = ['add', 'list', 'remove', 'schedule', 'run', 'help'];
-      for (const sub of routineSubs) completions.add(`/routine ${sub}`);
-      
-      // Team subcommands
-      const teamSubs = ['list', 'add', 'remove'];
-      for (const sub of teamSubs) completions.add(`/team ${sub}`);
-      
-      // Character switching: no loadCharacters() API is available yet.
-      // Completions will be populated once a character listing function is added.
-      const chars = [];
-      for (const char of chars) {
-        completions.add(`/character ${char.name}`);
-      }
-      
-      // Routine names
-      try {
-        const routines = loadRoutines({ cwd });
-        for (const r of routines.routines) {
-          completions.add(`/routine run ${r.name}`);
-          completions.add(`/routine schedule ${r.name}`);
-          completions.add(`/routine remove ${r.name}`);
-        }
-      } catch { }
-      
-      // Model names
-      try {
-        const models = listModels?.() ?? [];
-        for (const m of models) {
-          completions.add(`/model ${m}`);
-        }
-      } catch { }
-      
-      return Array.from(completions).sort();
-    };
-    
     const iface = createInterface({
       input: process.stdin,
       output: process.stderr,
       completer: (line) => {
-        const hits = buildCompletions().filter(c => c.startsWith(line));
+        const hits = buildCompletions(cwd).filter(c => c.startsWith(line));
         return [hits.length ? hits : [], line];
       }
     });
@@ -1255,8 +1319,12 @@ async function main() {
     try { await closeMcpClients(); } catch { /* already gone */ }
   }
 }
-main().catch(error => {
-  const aborted = error?.name === 'AbortError';
-  console.error(friendlyError(error, { aborted }));
-  if (!aborted) process.exitCode = 1;
-});
+if (process.argv[1] && (import.meta.url === `file://${process.argv[1]}` || process.argv[1].endsWith('flow.js') || process.argv[1].endsWith('flow') || process.argv[1].endsWith('sword'))) {
+  main().catch(error => {
+    const aborted = error?.name === 'AbortError';
+    console.error(friendlyError(error, { aborted }));
+    if (!aborted) process.exitCode = 1;
+  });
+}
+
+export { main, listModels };

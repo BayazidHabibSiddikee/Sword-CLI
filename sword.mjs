@@ -279,6 +279,73 @@ function stop(name) {
   try { writeFileSync(pidFile(name), ''); } catch {}
 }
 
+const SWORD_HELP = `SwordCLI — project coding assistant
+Usage: sword [--cwd DIRECTORY] [--prompt TEXT] [--json] [--session NAME]
+  --prompt, -p   Run one task (writes and commands denied without a TTY)
+  --cwd          Project directory; defaults to your current directory
+  --session      Save/resume conversation in PROJECT/.flow/NAME.json
+  --local        Disable web sharing; combine with --session NAME for local storage
+  --shared       Create a backend session (default for npm run sword)
+  --shared-session ID  Resume a backend session (use its exact workspace)
+  --import-session NAME  With --shared, copy a local named session to backend
+  --mode         coding | marketing-video (default: coding)
+  --persona      Character persona to use (e.g. --persona izuku). Default: neutral.
+                 Also: SWORD_PERSONA=izuku env var.
+  --model        Override the model (default: strongest available, else auto)
+  --team         Round-robin team discussion: all 10 agents deliberate, then a writer responds
+  --team-rounds N  Deliberation rounds 1..5 (default 1); later rounds see the vote tally
+   --json         One-shot JSON output; includes toolsUsed/toolsRan in the response object
+   --version, -v  Print version and exit
+   --help, -h     Show this help
+Subcommands:
+   sword doctor                      Diagnose provider + tool state; prints exact fix steps
+   sword up|down|status|logs         Manage the local backend stack
+    sword mcp <add|remove|list|test|show|help>   Connect to and manage MCP servers
+      (mcp test NAME connects to a server and lists its tools — the same path
+       the agent uses; run it after mcp add to confirm the connection works)
+    sword routine <add|list|remove|schedule|run>   Standing tasks: define a prompt,
+      schedule it (hourly/daily/weekdays/weekly/once/cron), run it headless, and
+      keep a per-run record in .flow/routines/ (read-only by default, safe to schedule)
+Power tools available to the model (use naturally in your prompts):
+   apply_patch    Apply a unified diff atomically across multiple files (one approval step)
+   task           Spawn a parallel read-only sub-agent to investigate a question
+   web_search     Search the web (DuckDuckGo, no key required)
+   write_file / edit_file / run_command   Create, edit, and execute (each requires approval)
+Interactive commands: /help /clear /status /team /web /provider /undo /exit
+The session never ends by itself: Ctrl+D exits, Ctrl+C cancels the current turn
+(and exits when pressed twice at the prompt), /exit and /quit exit.
+Every file edit and command requires approval. At the prompt: y allows once,
+a allows that tool for the rest of the session, A allows all writes+commands
+for this session (use with care — applies to all future turns), N denies.
+Grants live only in this process and are never written to disk.
+Commands are NOT sandboxed.
+Configuration: OPENAI_BASE_URL, OPENAI_API_KEY, OPENAI_MODEL; PROXY_HOST fallback.
+  SWORD_PERSONA=izuku  Enable character persona (same as --persona izuku)
+Model choice: --model, else SWORD_MODEL, else the strongest model the backend
+advertises, else backend auto-routing. The backend's balanced routing strategy
+picks much weaker models (flash-lite class), so SwordCLI selects a strong one.
+Default endpoint: http://localhost:3101/v1 (independent sword-server)
+Project content is sent to your chosen provider. Use only trusted workspaces.
+`;
+
+const rawArgs = process.argv.slice(2);
+const isHelp = rawArgs.some(a => a === '--help' || a === '-h' || a === 'help');
+const isVersion = rawArgs.some(a => a === '--version' || a === '-v' || a === 'version');
+
+if (isHelp) {
+  console.log(SWORD_HELP);
+  process.exit(0);
+}
+if (isVersion) {
+  try {
+    const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
+    console.log(pkg.version || '1.0.0');
+  } catch {
+    console.log('1.0.0');
+  }
+  process.exit(0);
+}
+
 const cmd = process.argv[2];
 if (cmd === 'mcp') {
   // MCP management never needs the stack (no ollama/api/backend/web, no TTY).

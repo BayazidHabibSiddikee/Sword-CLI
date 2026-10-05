@@ -7,6 +7,8 @@
 // falls back to the backend's `auto` routing. Nothing is hardcoded blindly: the
 // preference list is intersected with GET /v1/models, so a retired model id can
 // never pin the CLI to something the backend cannot serve.
+import { listProviders } from './providers.js';
+
 const PREFERRED_MODELS = [
   'gemini-3.6-flash',
   'moonshotai/Kimi-K3',
@@ -18,6 +20,24 @@ const PREFERRED_MODELS = [
   'deepseek-ai/DeepSeek-V4-Flash',
   'gemini-3.5-flash',
 ];
+
+/** Return available model IDs for completion and discovery. */
+export function listModels() {
+  const models = new Set([
+    'qwen2.5:1.5b',
+    'qwen2.5-coder:7b',
+    'gpt-4o',
+    'claude-3-5-sonnet',
+    ...PREFERRED_MODELS
+  ]);
+  try {
+    const custom = listProviders();
+    for (const p of custom) {
+      if (p.model) models.add(p.model);
+    }
+  } catch {}
+  return Array.from(models);
+}
 
 /** GET /v1/models URL derived from the configured chat-completions endpoint. */
 export function modelsUrl(config) {

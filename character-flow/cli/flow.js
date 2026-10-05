@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
 import { realpath, stat } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import chalk from 'chalk';
@@ -54,6 +55,7 @@ Usage: sword [--cwd DIRECTORY] [--prompt TEXT] [--json] [--session NAME]
   --model        Override the model (default: strongest available, else auto)
   --team         Round-robin team discussion: all 10 agents deliberate, then a writer responds
   --json         One-shot JSON output, diagnostics on stderr
+  --version, -v  Print version and exit
   --help, -h     Show this help
 Interactive: /help /clear /status /team /web /exit
 The session never ends by itself: Ctrl+D exits, Ctrl+C cancels the current turn
@@ -67,14 +69,38 @@ Default endpoint: http://localhost:3101/v1 (independent sword-server)
 Project content is sent to your chosen provider. Use only trusted workspaces.
 `;
 async function main() {
+  const argv = process.argv.slice(2);
+  if (argv[0] === 'help') {
+    console.log(HELP);
+    return;
+  }
+  if (argv[0] === 'version') {
+    try {
+      const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf8'));
+      console.log(pkg.version || '1.0.0');
+    } catch {
+      console.log('1.0.0');
+    }
+    return;
+  }
   const { values } = parseArgs({ options: {
     prompt: { type: 'string', short: 'p' }, cwd: { type: 'string' },
     model: { type: 'string' }, session: { type: 'string' }, mode: { type: 'string', default: 'coding' },
     json: { type: 'boolean' }, help: { type: 'boolean', short: 'h' },
+    version: { type: 'boolean', short: 'v' },
     shared: { type: 'boolean' }, local: { type: 'boolean' }, 'shared-session': { type: 'string' }, 'import-session': { type: 'string' },
     team: { type: 'boolean' }
   } });
   if (values.help) { console.log(HELP); return; }
+  if (values.version) {
+    try {
+      const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf8'));
+      console.log(pkg.version || '1.0.0');
+    } catch {
+      console.log('1.0.0');
+    }
+    return;
+  }
   if (values.json && !values.prompt) throw new Error('--json requires --prompt');
   if (!['coding', 'marketing-video'].includes(values.mode)) throw new Error(`Unknown mode: ${values.mode}`);
   const interactive = Boolean(process.stdin.isTTY && process.stderr.isTTY);
@@ -123,13 +149,22 @@ async function main() {
   }
   const system = { role: 'system', content: buildSystemPrompt(cwd, shared?.mode || values.mode) };
   const provider = { ...config, model: values.model || shared?.model || selectedModel };
-  let history = shared ? shared.messages : values.session ? await loadSession(cwd, values.session) : [];
-  // Merge local --session history so prior turns are visible to the LLM.
+  let sessionMessages = [];
+  if (values.session) {
+    try {
+      sessionMessages = await loadSession(cwd, values.session);
+    } catch (err) {
+      console.error(`[sword] Warning: Failed to load session "${values.session}" (${err?.message || err}). Starting a clean session.`);
+      sessionMessages = [];
+    }
+  }
+  let history = shared ? shared.messages : sessionMessages;
+  // Merge local --session history into shared backend messages if both are present.
   // Deduplicate by (role, content) so shared backend messages don't double-appear.
-  if (values.session && !shared) {
+  if (values.session && shared && sessionMessages.length > 0) {
     const key = m => `${m.role}:${(m.content || '').slice(0, 120)}`;
     const existing = new Set(history.map(key));
-    for (const m of values.session ? await loadSession(cwd, values.session) : []) {
+    for (const m of sessionMessages) {
       if (!existing.has(key(m))) { history.push(m); existing.add(key(m)); }
     }
   }
