@@ -34,16 +34,22 @@ Whether you need a **Local AI coding assistant**, a **multi-agent workflow orche
 
 Here is a glimpse of SwordCLI in action!
 
-![CLI Interface 1](docs/media/1791196752.png)
-![CLI Interface 2](docs/media/1791196755.png)
-![CLI Interface 3](docs/media/1791196895.png)
-![CLI Interface 4](docs/media/1791196899.png)
-![CLI Interface 5](docs/media/1791205804.png)
-![CLI Interface 6](docs/media/1791205808.png)
+<table>
+  <tr>
+    <td><img src="docs/media/1791196752.png" width="100%" alt="CLI Interface 1"></td>
+    <td><img src="docs/media/1791196755.png" width="100%" alt="CLI Interface 2"></td>
+    <td><img src="docs/media/1791196895.png" width="100%" alt="CLI Interface 3"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/media/1791196899.png" width="100%" alt="CLI Interface 4"></td>
+    <td><img src="docs/media/1791205804.png" width="100%" alt="CLI Interface 5"></td>
+    <td><img src="docs/media/1791205808.png" width="100%" alt="CLI Interface 6"></td>
+  </tr>
+</table>
 
 ### Video Demo
-Watch the compressed demo video below:
-[Watch Demo Video](docs/media/demo.mp4)
+Watch the compressed demo video below:<br>
+▶️ **[Watch Demo Video](docs/media/demo.mp4)**
 
 ## 📦 Installation & Setup
 
