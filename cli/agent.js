@@ -271,7 +271,7 @@ function checkpointRepair(history, calls, onCheckpoint) {
 
 async function sessionPath(cwd, name) {
   if (!/^[a-zA-Z0-9_-]{1,64}$/.test(name)) throw new Error('Invalid session name');
-  const dir = join(cwd, '.flow');
+  const dir = join(cwd, '.sword');
   try { if ((await lstat(dir)).isSymbolicLink()) throw new Error('Unsafe session directory'); }
   catch (error) { if (error.code !== 'ENOENT') throw error; }
   return join(dir, `${name}.json`);
@@ -290,7 +290,7 @@ export async function loadSession(cwd, name) {
 
 export async function saveSession(cwd, name, messages) {
   const file = await sessionPath(cwd, name);
-  await mkdir(join(cwd, '.flow'), { recursive: true, mode: 0o700 });
+  await mkdir(join(cwd, '.sword'), { recursive: true, mode: 0o700 });
   const temp = `${file}.${process.pid}.tmp`;
   await writeFile(temp, JSON.stringify({ cwd, messages }), { mode: 0o600, flag: 'wx' });
   await rename(temp, file);

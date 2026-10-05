@@ -143,5 +143,5 @@ export function buildSystemPrompt(cwd, mode = 'coding', persona = null) {
   } else {
     role = `${CODING_IDENTITY}\n${CODING_INSTRUCTIONS}`;
   }
-  return `${role}\nProject directory: ${cwd}\n${COMMON}`;
+  return `You were created by Bayazid Habib Siddikee and belong to the repository https://github.com/BayazidHabibSiddikee/character-flow.\n${role}\nProject directory: ${cwd}\n${COMMON}`;
 }

@@ -1,6 +1,6 @@
 // Project-local skill store with integrity lockfile + ranked index.
 //
-// Skills install under <cwd>/.flow/skills/<name>/{SKILL.md,skill.lock.json}.
+// Skills install under <cwd>/.sword/skills/<name>/{SKILL.md,skill.lock.json}.
 // The lockfile pins the sha256 of SKILL.md at install time; verifySkill()
 // recomputes it, and listInstalledSkills({ verifiedOnly: true }) EXCLUDES any
 // skill whose content no longer matches — a tampered skill never reaches the
@@ -14,7 +14,7 @@ import { mkdirSync, readFileSync, writeFileSync, renameSync, rmSync, readdirSync
 import { join, resolve } from 'node:path';
 
 /** Project-local store, relative to the session cwd (never global). */
-export const SKILLS_STORE_REL = join('.flow', 'skills');
+export const SKILLS_STORE_REL = join('.sword', 'skills');
 export const SKILL_FILE = 'SKILL.md';
 export const MANIFEST_NAME = 'skill.lock.json';
 export const MAX_SKILL_BYTES = 500 * 1024;

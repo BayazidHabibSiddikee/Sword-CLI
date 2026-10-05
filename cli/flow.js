@@ -91,7 +91,7 @@ async function ensureSkillBlock(cwd) {
 // of its models via --model; with no (or an unknown) model hint we deliberately return
 // null so the configured local backend stays in charge. Falling back to "the last
 // provider in the file" would silently hijack every default run — e.g. a stale
-// .flow/providers.json entry would send all traffic to a dead URL and force g4f.
+// .sword/providers.json entry would send all traffic to a dead URL and force g4f.
 async function resolveCustomProvider(modelHint, fallbackOnly) {
   if (fallbackOnly) return null;
   if (!modelHint) return null;
@@ -223,7 +223,7 @@ const HELP = `SwordCLI — project coding assistant
 Usage: sword [--cwd DIRECTORY] [--prompt TEXT] [--json] [--session NAME]
   --prompt, -p   Run one task (writes and commands denied without a TTY)
   --cwd          Project directory; defaults to your current directory
-  --session      Save/resume conversation in PROJECT/.flow/NAME.json
+  --session      Save/resume conversation in PROJECT/.sword/NAME.json
   --local        Disable web sharing; combine with --session NAME for local storage
   --shared       Create a backend session (default for npm run sword)
   --shared-session ID  Resume a backend session (use its exact workspace)
@@ -245,7 +245,7 @@ Subcommands:
        the agent uses; run it after mcp add to confirm the connection works)
     sword routine <add|list|remove|schedule|run>   Standing tasks: define a prompt,
       schedule it (hourly/daily/weekdays/weekly/once/cron), run it headless, and
-      keep a per-run record in .flow/routines/ (read-only by default, safe to schedule)
+      keep a per-run record in .sword/routines/ (read-only by default, safe to schedule)
 Power tools available to the model (use naturally in your prompts):
    apply_patch    Apply a unified diff atomically across multiple files (one approval step)
    task           Spawn a parallel read-only sub-agent to investigate a question
@@ -438,7 +438,7 @@ async function main() {
     }
   } catch { mcpServers = []; mcpDefinitions = []; }
   const toolDefs = mcpDefinitions.length ? [...toolDefinitions, ...mcpDefinitions] : toolDefinitions;
-  // Local, append-only usage accounting (.flow/usage.jsonl, mode 0600). Best-effort:
+  // Local, append-only usage accounting (.sword/usage.jsonl, mode 0600). Best-effort:
   // a failed accounting write must never break a turn, so recordTurn is fire-and-forget.
   const usage = createUsageTracker({ cwd, provider: useG4f ? 'g4f' : 'openai-compatible' });
   // Load session with crash resilience against corrupt, oversized (>1MB), or invalid files.
@@ -788,7 +788,7 @@ async function main() {
       indicator?.stop();
       indicator = null;
       // Usage accounting is best-effort and never awaited: the turn is already
-      // complete, and a failed .flow/usage.jsonl write must not surface as an error.
+      // complete, and a failed .sword/usage.jsonl write must not surface as an error.
       usage.recordTurn({
         model: provider.model,
         provider: useG4f ? 'g4f' : 'openai-compatible',
@@ -1106,7 +1106,7 @@ async function main() {
       const cost = spend.cost_usd ? `, $${spend.cost_usd.toFixed(4)}` : '';
       let saved = [];
       try {
-        const dir = join(cwd, '.flow');
+        const dir = join(cwd, '.sword');
         const entries = await readdir(dir).catch(() => []);
         for (const e of entries) {
           if (e.endsWith('.json') && e !== 'providers.json') {
@@ -1235,7 +1235,7 @@ async function main() {
       const finish = result => { if (!settled) { settled = true; resolve(result); } };
       const onClose = () => setImmediate(() => finish({ closed: true, reason: lastQuestionError }));
       iface.once('close', onClose);
-      iface.question('\nsword> ').then(
+      iface.question(`\n${chalk.blue('sword> ')}`).then(
         value => { iface.removeListener('close', onClose); finish({ value: String(value ?? '') }); },
         error => {
           iface.removeListener('close', onClose);

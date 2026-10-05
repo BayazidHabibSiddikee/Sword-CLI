@@ -119,7 +119,7 @@ export async function changeMany(name, items, deps = {}) {
       } else {
         // Same temp+rename shape as change() in tools.js: a crash mid-write leaves
         // either the old file or the new one, never a half-written source file.
-        const temp = `${change.full}.flow-${process.pid}-${Date.now().toString(36)}-${i}.tmp`;
+        const temp = `${change.full}.sword-${process.pid}-${Date.now().toString(36)}-${i}.tmp`;
         temps.push(temp);
         await writeFile(temp, change.after, { flag: 'wx' });
         await rename(temp, change.full);

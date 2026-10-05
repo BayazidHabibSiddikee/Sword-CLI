@@ -6,7 +6,7 @@
 // CLI path never asked.
 //
 // Design constraints, all deliberate:
-//   - Local only. One JSON line per turn appended to <cwd>/.flow/usage.jsonl. No
+//   - Local only. One JSON line per turn appended to <cwd>/.sword/usage.jsonl. No
 //     network call, no telemetry, no analytics endpoint — a coding agent that reads
 //     your files must not also report to anyone.
 //   - Mode 0600. The file lives next to the session history and is created
@@ -39,7 +39,7 @@ export function estimateTokens(text) {
 }
 
 const FILE = 'usage.jsonl';
-const DIR = '.flow';
+const DIR = '.sword';
 const MODE = 0o600;
 
 // The complete, closed set of persisted keys. See the whitelist note above.

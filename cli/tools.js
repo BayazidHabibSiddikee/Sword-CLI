@@ -226,7 +226,7 @@ export function createTools({ cwd, approve = async () => false, signal, timeout 
       // Overwrite atomically: write a sibling temp file and rename it into place.
       // A crash mid-write then leaves either the old file or the new one on disk,
       // never a half-written source file.
-      const temp = `${full}.flow-${process.pid}-${Date.now().toString(36)}.tmp`;
+      const temp = `${full}.sword-${process.pid}-${Date.now().toString(36)}.tmp`;
       try {
         await writeFile(temp, after, { flag: 'wx' });
         await rename(temp, full);
@@ -243,7 +243,7 @@ export function createTools({ cwd, approve = async () => false, signal, timeout 
     const title = text(args.title, 'title');
     const content = text(args.content, 'content', true);
     // Write to the SAME database the agent searches. The old code created a second
-    // project-local .flow/rag.db, so every save was invisible to retrieval for the
+    // project-local .sword/rag.db, so every save was invisible to retrieval for the
     // rest of the session — a silent feature that never worked.
     await mkdir(dirname(ragDbPath), { recursive: true });
     await permit({ tool: 'save_to_rag', path: ragDbPath, category, title });
@@ -301,7 +301,7 @@ export function createTools({ cwd, approve = async () => false, signal, timeout 
         // 'wx' makes a create fail if the path appeared since we read.
         await writeFile(full, target, { flag: 'wx' });
       } else {
-        const temp = `${full}.flow-${process.pid}-${Date.now().toString(36)}.tmp`;
+        const temp = `${full}.sword-${process.pid}-${Date.now().toString(36)}.tmp`;
         try { await writeFile(temp, target, { flag: 'wx' }); await rename(temp, full); }
         catch (error) { await rm(temp, { force: true }).catch(() => {}); throw error; }
       }
@@ -1561,7 +1561,7 @@ export async function uploadKnowledge({ filePath, category, title, tags, chunkSi
   
   // Import RAG engine
   const { RagEngine } = await import('./brain/rag.js');
-  const ragDbPath = join(cwd, '.flow', 'rag.db');
+  const ragDbPath = join(cwd, '.sword', 'rag.db');
   const engine = new RagEngine(ragDbPath);
   
   const titleStr = title || filePath.split('/').pop();
@@ -1647,8 +1647,8 @@ export async function saveCharacterMemory({ cwd, characterName, memories, signal
   // Also store in RAG for semantic search
   try {
     const { RagEngine } = await import('./brain/rag.js');
-    const ragDbPath = join(cwd, '.flow', 'rag.db');
-    const engine = new RagEngine(join(cwd, '.flow', 'rag.db'));
+    const ragDbPath = join(cwd, '.sword', 'rag.db');
+    const engine = new RagEngine(join(cwd, '.sword', 'rag.db'));
     
     for (const mem of memories) {
       if (mem.content?.trim()) {
@@ -1678,7 +1678,7 @@ export async function loadCharacterMemory({ cwd, characterName, limit = 100, sig
 export async function searchCharacterMemory({ cwd, characterName, query, limit = 10, signal }) {
   try {
     const { RagEngine } = await import('./brain/rag.js');
-    const engine = new RagEngine(join(cwd, '.flow', 'rag.db'));
+    const engine = new RagEngine(join(cwd, '.sword', 'rag.db'));
     
     const results = engine.search(`${characterName} memory ${query}`, limit);
     return { results: results.map(r => ({

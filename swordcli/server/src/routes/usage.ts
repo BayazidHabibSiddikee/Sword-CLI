@@ -1,6 +1,6 @@
 // Local CLI usage accounting over HTTP.
 //
-// The CLI writes one JSON line per turn to <cwd>/.flow/usage.jsonl (see cli/usage.js).
+// The CLI writes one JSON line per turn to <cwd>/.sword/usage.jsonl (see cli/usage.js).
 // This route exposes those rows to the dashboard so a session's token spend is
 // inspectable without opening the file. It is deliberately read-only and
 // local-filesystem only: it never writes, never calls a provider, and never accepts a
@@ -18,7 +18,7 @@ const LINE_FIELDS = ['ts', 'model', 'provider', 'tokens_in', 'tokens_out', 'cost
 
 function usageFile(): string {
   const dir = process.env.SWORD_USAGE_DIR ? resolve(process.env.SWORD_USAGE_DIR) : process.cwd();
-  return join(dir, '.flow', 'usage.jsonl');
+  return join(dir, '.sword', 'usage.jsonl');
 }
 
 function readRows(file: string): Record<string, unknown>[] {

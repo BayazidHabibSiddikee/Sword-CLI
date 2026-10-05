@@ -5,7 +5,7 @@
 //   - definitions live in .sword/routines.json (project) or ~/.config/sword (global)
 //   - `routine run` is a headless, read-only one-shot turn (safe unattended default)
 //   - `routine schedule` GENERATES the cron/systemd line; a CLI does not own a daemon
-//   - every run writes .flow/routines/<name>/NNNNNN.json (mode 0600)
+//   - every run writes .sword/routines/<name>/NNNNNN.json (mode 0600)
 //
 // The pure store/schedule/record functions are exported and tested independently;
 // runRoutineCommand mirrors mcpManage.runMcpCommand (parse -> dispatch -> exit code).
@@ -146,12 +146,12 @@ export function scheduleCronLine(routine, { bin = 'sword', cwd = process.cwd() }
   const name = routine?.name;
   if (!name) return null;
   if (!expr) return `# "${name}" is ${routine.schedule === 'once' ? 'a one-shot' : 'on-demand'} — run it manually:  ${bin} routine run ${name}`;
-  return `${expr} cd ${cwd} && ${bin} routine run ${name} >> .flow/routines/${name}/cron.log 2>&1`;
+  return `${expr} cd ${cwd} && ${bin} routine run ${name} >> .sword/routines/${name}/cron.log 2>&1`;
 }
 
-/** Record one run's output to .flow/routines/<name>/NNNNNN.json (mode 0600). */
+/** Record one run's output to .sword/routines/<name>/NNNNNN.json (mode 0600). */
 export function recordRun({ cwd, name, prompt, status, output, toolCount = null, durationMs = null, exitCode = null }) {
-  const dir = join(resolve(cwd), '.flow', 'routines', name);
+  const dir = join(resolve(cwd), '.sword', 'routines', name);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const index = readdirSync(dir).filter(f => /^\d{6}\.json$/.test(f)).length;
   const record = {
@@ -218,7 +218,7 @@ const HELP = `sword routine — standing, scheduled tasks with a per-run record
   routine list   [--cwd DIR]          every routine, project + global, with last-run status
   routine remove <name> [--global | --cwd DIR]
   routine schedule <name> [--cwd DIR] print the cron line to install (a CLI does not run it)
-  routine run <name> [--cwd DIR]      run now (headless, read-only) and record to .flow/routines/<name>/
+  routine run <name> [--cwd DIR]      run now (headless, read-only) and record to .sword/routines/<name>/
   routine help
 
 Routines are safe to schedule unattended because "routine run" is read-only by

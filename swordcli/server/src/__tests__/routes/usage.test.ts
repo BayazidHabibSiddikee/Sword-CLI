@@ -1,6 +1,6 @@
 // Route-level tests for /api/usage. Mounted on a bare Express app so the test needs
 // neither the database nor the provider stack. The route reads <SWORD_USAGE_DIR>/
-// .flow/usage.jsonl, so each test points SWORD_USAGE_DIR at a temp fixture.
+// .sword/usage.jsonl, so each test points SWORD_USAGE_DIR at a temp fixture.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import express from 'express';
 import type { Server } from 'node:http';
@@ -14,8 +14,8 @@ let base: string;
 let dir: string;
 
 function writeUsage(lines: unknown[]): void {
-  fs.mkdirSync(path.join(dir, '.flow'), { recursive: true });
-  fs.writeFileSync(path.join(dir, '.flow', 'usage.jsonl'), lines.map(l => JSON.stringify(l)).join('\n') + '\n');
+  fs.mkdirSync(path.join(dir, '.sword'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.sword', 'usage.jsonl'), lines.map(l => JSON.stringify(l)).join('\n') + '\n');
 }
 
 beforeAll(async () => {
@@ -66,7 +66,7 @@ describe('GET /api/usage', () => {
   });
 
   it('skips a truncated final line instead of failing', async () => {
-    const file = path.join(dir, '.flow', 'usage.jsonl');
+    const file = path.join(dir, '.sword', 'usage.jsonl');
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, `${JSON.stringify({ ts: 'x', model: 'm', tokens_in: 1, tokens_out: 1 })}\n{"ts":"partial`);
     const res = await fetch(base);
