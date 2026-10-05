@@ -19,13 +19,13 @@ const SUMMARY_LIMIT = 60;
 
 export function toolLine(name, info = {}) {
   const { ok, ms, summary } = info;
-  const mark = ok === false ? chalk.yellow('✗') : chalk.cyan('✓');
-  const parts = [mark, String(name)];
-  if (ok === false) parts.push(chalk.dim('failed'));
+  const mark = ok === false ? chalk.red.bold('✗') : chalk.green.bold('✓');
+  const parts = [mark, chalk.bold(name)];
+  if (ok === false) parts.push(chalk.red('failed'));
   if (typeof ms === 'number' && Number.isFinite(ms)) parts.push(`${chalk.dim(`${Math.round(ms)}ms`)}`);
   if (typeof summary === 'string' && summary.length > 0) {
     const flat = summary.replace(/\s+/g, ' ').trim();
-    parts.push(flat.length > SUMMARY_LIMIT ? `${flat.slice(0, SUMMARY_LIMIT - 3)}...` : flat);
+    parts.push(flat.length > SUMMARY_LIMIT ? chalk.cyan(`${flat.slice(0, SUMMARY_LIMIT - 3)}...`) : chalk.cyan(flat));
   }
   return parts.join(' ');
 }
@@ -100,7 +100,7 @@ export function approvePrompt(proposal) {
   // one header plus one diff block per file, so the user approves the batch or
   // nothing — never file-by-file.
   if (batch === true && Array.isArray(before) && before.length) {
-    lines.push(`  ${chalk.yellow(`apply ${before.length} file(s) as one atomic batch`)}`);
+    lines.push(`  ${chalk.magenta.bold(`apply ${before.length} file(s) as one atomic batch`)}`);
     for (const change of before) {
       if (change?.full) lines.push(`  ${chalk.dim(String(change.full))}`);
       else if (change?.path) lines.push(`  ${chalk.dim(String(change.path))}`);
@@ -109,20 +109,20 @@ export function approvePrompt(proposal) {
   } else if (tool === 'write_file') {
     const bytes = typeof after === 'string' ? Buffer.byteLength(after, 'utf8') : 0;
     const verb = before === null ? 'create' : 'overwrite';
-    lines.push(`  ${chalk.yellow(`${verb} ${pathName} (${bytes} bytes)`)}`);
+    lines.push(`  ${chalk.green.bold(verb)} ${chalk.cyan(pathName)} ${chalk.yellow(`(${chalk.cyan(Buffer.byteLength(after, 'utf8'))} bytes)`)}`);
   } else if (tool === 'edit_file') {
     const plus = before ? (after?.match(/\n/g) || []).length - (before.match(/\n/g) || []).length : 0;
     const minus = plus < 0 ? -plus : 0;
-    const add = plus > 0 ? `+${plus}` : '';
-    const rem = minus > 0 ? `−${minus}` : '';
+    const add = plus > 0 ? chalk.green(`+${plus}`) : '';
+    const rem = minus > 0 ? chalk.red(`−${minus}`) : '';
     const delta = add || rem ? ` ${chalk.yellow(`(${add} ${rem})`)}` : '';
-    lines.push(`  ${chalk.yellow(`edit ${pathName}`)}${delta}`);
+    lines.push(`  ${chalk.magenta('edit')} ${chalk.cyan(pathName)}${delta}`);
   } else if (tool === 'run_command') {
     const cmd = [command, ...(Array.isArray(args) ? args : [])].join(' ');
-    lines.push(`  ${chalk.yellow(`run ${cmd}`)}`);
+    lines.push(`  ${chalk.blue.bold('run')} ${cmd}`);
     if (timeout != null) lines.push(`  ${chalk.dim(`(timeout ${timeout}ms)`)}`);
   } else if (tool === 'save_to_rag') {
-    lines.push(`  ${chalk.yellow(`save to memory: ${proposal.title}`)} ${chalk.dim(`(${proposal.category})`)}`);
+    lines.push(`  ${chalk.blue.bold('save')} to memory: ${chalk.cyan(proposal.title)} ${chalk.dim(`(${proposal.category})`)}`);
   } else {
     lines.push(`  ${chalk.dim(`${tool}: ${JSON.stringify(proposal)}`)}`);
   }
@@ -268,15 +268,15 @@ export function thinkingIndicator(stream = process.stderr) {
 export function banner(opts) {
   const { mode, model, cwd, session, revision } = opts;
   const lines = [];
-  lines.push(`  ${chalk.cyan('SwordCLI')} · ${mode} · ${model}`);
-  lines.push(`  ${chalk.dim('cwd:')} ${cwd}`);
+  lines.push(`  ${chalk.cyan.bold('⚔ SwordCLI')}  ${chalk.magenta(mode)}  ${chalk.yellow(model)}`);
+  lines.push(`  ${chalk.dim('cwd:')}      ${chalk.cyan(cwd)}`);
   if (session) {
-    if (revision != null) lines.push(`  ${chalk.dim('session:')} ${session} (rev ${revision})`);
+    if (revision != null) lines.push(`  ${chalk.dim('session:')} ${session} ${chalk.dim(`(rev ${revision})`)}`);
     else lines.push(`  ${chalk.dim('session:')} ${session}`);
   } else {
-    lines.push(`  ${chalk.dim('session:')} (local | ephemeral)`);
+    lines.push(`  ${chalk.dim('session:')} ${chalk.yellow('(local | ephemeral)')}`);
   }
-  lines.push(`  ${chalk.dim('contact:')} bayazid@med.com.bd`);
+  lines.push(`  ${chalk.dim('contact:')} ${chalk.cyan('bayazid@med.com.bd')}`);
   lines.push('');
   return lines.join('\n');
 }

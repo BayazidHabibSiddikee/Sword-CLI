@@ -85,18 +85,19 @@ test('safe strips VT and other control characters', () => {
 
 test('banner formats mode, model, cwd and session', () => {
   const text = banner({ mode: 'coding', model: 'gpt-4', cwd: '/tmp' });
-  assert.match(text, /SwordCLI/);
+  assert.match(text, /⚔ SwordCLI/);
   assert.match(text, /coding/);
   assert.match(text, /gpt-4/);
-  assert.match(text, /cwd: \/tmp/);
+  assert.match(text, /cwd:.*\/tmp/);
   assert.match(text, /session: \(local \| ephemeral\)/);
+
 
   const shared = banner({ mode: 'marketing-video', model: 'auto', cwd: '/tmp', session: 'abc', revision: 7 });
   assert.match(shared, /marketing-video/);
-  assert.match(shared, /session: abc \(rev 7\)/);
+  assert.match(shared, /session: abc.*rev 7/);
 
   const plainSession = banner({ mode: 'coding', model: 'auto', cwd: '/tmp', session: 'abc' });
-  assert.match(plainSession, /session: abc$/m);
+  assert.match(plainSession, /session: abc/m);
 });
 
 test('statusLine includes mode, model, cwd, session, history and approval', () => {

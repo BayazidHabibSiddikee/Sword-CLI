@@ -5,7 +5,7 @@ import { apiFetch } from './api'
 // Discord/Slack webhook, or a generic webhook. The bot token is write-only — the
 // server never returns it, so a view only says whether one is stored.
 
-export type Platform = 'telegram' | 'discord' | 'slack' | 'webhook'
+export type Platform = 'telegram' | 'discord' | 'slack' | 'webhook' | 'gmail'
 
 export interface ChannelConnection {
   id: string
@@ -40,6 +40,7 @@ export const PLATFORMS: Array<{ value: Platform; label: string; targetHint: stri
   { value: 'discord', label: 'Discord', targetHint: 'Discord webhook URL', needsToken: false },
   { value: 'slack', label: 'Slack', targetHint: 'Slack incoming-webhook URL', needsToken: false },
   { value: 'webhook', label: 'Webhook', targetHint: 'Any https endpoint that accepts JSON', needsToken: false },
+  { value: 'gmail', label: 'Gmail', targetHint: 'Email address to send to', needsToken: false },
 ]
 
 export function listChannels(): Promise<{ connections: ChannelConnection[] }> {

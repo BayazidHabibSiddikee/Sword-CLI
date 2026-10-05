@@ -16,6 +16,7 @@ import SwordPage from '@/pages/SwordPage'
 import AgentPage from '@/pages/AgentPage'
 import KnowledgePage from '@/pages/KnowledgePage'
 import ConnectionsPage from '@/pages/ConnectionsPage'
+import SettingsPage from '@/pages/SettingsPage'
 
 const queryClient = new QueryClient()
 
@@ -26,6 +27,7 @@ const navItems: Array<{ to: string; label: string; external?: boolean }> = [
   { to: '/agent', label: 'Agent' },
   { to: '/knowledge', label: 'Knowledge' },
   { to: '/connections', label: 'Channels' },
+  { to: '/settings', label: 'Settings' },
 ]
 
 function getPreferredDarkMode() {
@@ -158,6 +160,7 @@ function App() {
               <Route path="/agent" element={<AgentPage />} />
               <Route path="/knowledge" element={<KnowledgePage />} />
               <Route path="/connections" element={<ConnectionsPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
             </Routes>
           </main>
         </div>
