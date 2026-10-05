@@ -119,7 +119,7 @@ export function markdownLite(text, interactive) {
       }
       i++;
     }
-    parts.unshift(escaped);
+    parts.push(escaped);
     return parts.join('');
   }
   return safe(text);

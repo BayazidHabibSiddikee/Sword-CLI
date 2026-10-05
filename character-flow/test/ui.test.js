@@ -37,6 +37,27 @@ test('markdownLite interactive mode highlights inline code and non-interactive u
   assert.ok(!plain.includes('```'));
 });
 
+test('markdownLite preserves correct sequential order for prefix, code, and suffix', () => {
+  const rendered = markdownLite('Prefix `code` then suffix', true);
+  const prefixIdx = rendered.indexOf('Prefix');
+  const codeIdx = rendered.indexOf('code');
+  const suffixIdx = rendered.indexOf('then suffix');
+  assert.ok(prefixIdx !== -1, 'Prefix must be present');
+  assert.ok(codeIdx !== -1, 'code must be present');
+  assert.ok(suffixIdx !== -1, 'suffix must be present');
+  assert.ok(prefixIdx < codeIdx, 'Prefix must precede code');
+  assert.ok(codeIdx < suffixIdx, 'code must precede suffix');
+  assert.ok(!rendered.startsWith(' then suffix'), 'suffix must not be prepended to the beginning');
+});
+
+test('markdownLite does not prepend trailing text in degraded-provider fallback message', () => {
+  const fallbackMsg = `[SwordCLI: No provider available]\n\nYour prompt: "test"\n\nNo LLM provider is reachable — all providers failed:\n- mock: failed\n\nWithout a working provider the agent CANNOT read files, write code, or run commands.\nRun \`sword doctor\` for an automated diagnosis and fix steps, or configure a provider:\n  • OPENAI_BASE_URL + OPENAI_API_KEY (any OpenAI-compatible endpoint)\n  • SWORDCLI_BASE_URL + SWORDCLI_TOKEN  (remote Sword backend)\n  • Start the local stack: \`./sword.mjs up\`  then re-run sword`;
+  const rendered = markdownLite(fallbackMsg, true);
+  assert.ok(!rendered.startsWith('  then re-run sword'), 'trailing text must not be prepended to the beginning');
+  assert.ok(rendered.startsWith('[SwordCLI: No provider available]'), 'message must start with header');
+  assert.ok(rendered.endsWith('  then re-run sword'), 'message must end with trailing instruction');
+});
+
 test('safe strips VT and other control characters', () => {
   const input = 'hello\u000Bworld\u0000foo';
   const out = safe(input);
