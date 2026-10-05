@@ -26,7 +26,7 @@ test('install writes SKILL.md + lockfile that verify accepts', async t => {
   assert.equal(verdict.ok, true);
   assert.equal(verdict.source, 'https://example.test/chart');
   // The lockfile pins the digest of the exact bytes installed.
-  const manifest = JSON.parse(await readFile(join(cwd, '.flow', 'skills', 'chart', MANIFEST_NAME), 'utf8'));
+  const manifest = JSON.parse(await readFile(join(cwd, '.sword', 'skills', 'chart', MANIFEST_NAME), 'utf8'));
   assert.equal(manifest.sha256, installed.sha256);
 });
 
@@ -41,7 +41,7 @@ test('a tampered skill is excluded from the verified listing', async t => {
   installSkill({ cwd, name: 'good', content: 'trusted body' });
   installSkill({ cwd, name: 'bad', content: 'trusted body' });
   // Tamper with one skill's content after install.
-  await writeFile(join(cwd, '.flow', 'skills', 'bad', SKILL_FILE), 'tampered body');
+  await writeFile(join(cwd, '.sword', 'skills', 'bad', SKILL_FILE), 'tampered body');
 
   assert.equal(verifySkill({ cwd, name: 'bad' }).ok, false);
   assert.match(verifySkill({ cwd, name: 'bad' }).reason, /tampered/);

@@ -116,7 +116,7 @@ test('the prompt survives turns, idle time and a single Ctrl+C; only Ctrl+D ends
   repl.send('\x04');
   await repl.wait(/Session closed by Ctrl\+D/);
   await new Promise(resolve => setTimeout(resolve, 250));
-  assert.equal(repl.exited, true, 'Ctrl+D must end the session');
+  console.log(repl.text); assert.equal(repl.exited, true, 'Ctrl+D must end the session');
   assert.equal(repl.exit, 0, 'Ctrl+D must exit with status 0');
 });
 

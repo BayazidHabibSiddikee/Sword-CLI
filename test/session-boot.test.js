@@ -55,7 +55,7 @@ test('boot with corrupt session JSON does not crash and logs gentle warning', as
   const tmp = await mkdtemp(join(tmpdir(), 'sword-corrupt-session-'));
   t.after(() => rm(tmp, { recursive: true, force: true }));
 
-  const flowDir = join(tmp, '.flow');
+  const flowDir = join(tmp, '.sword');
   await mkdir(flowDir, { recursive: true });
   // Corrupted session JSON
   await writeFile(join(flowDir, 'corrupt.json'), '{"cwd":"' + tmp + '", "messages": [invalid json');
@@ -76,7 +76,7 @@ test('boot with oversized session file (>1MB) does not crash and starts clean se
   const tmp = await mkdtemp(join(tmpdir(), 'sword-oversized-session-'));
   t.after(() => rm(tmp, { recursive: true, force: true }));
 
-  const flowDir = join(tmp, '.flow');
+  const flowDir = join(tmp, '.sword');
   await mkdir(flowDir, { recursive: true });
   // File size > 1,000,000 bytes
   const largeData = 'x'.repeat(1000005);
@@ -98,7 +98,7 @@ test('boot with valid session loads prior messages cleanly', async t => {
   const tmp = await mkdtemp(join(tmpdir(), 'sword-valid-session-'));
   t.after(() => rm(tmp, { recursive: true, force: true }));
 
-  const flowDir = join(tmp, '.flow');
+  const flowDir = join(tmp, '.sword');
   await mkdir(flowDir, { recursive: true });
   const validMessages = [
     { role: 'user', content: 'prior question' },
@@ -121,7 +121,7 @@ test('character-flow cli/flow.js also handles corrupt session gracefully', async
   const tmp = await mkdtemp(join(tmpdir(), 'char-flow-corrupt-'));
   t.after(() => rm(tmp, { recursive: true, force: true }));
 
-  const flowDir = join(tmp, '.flow');
+  const flowDir = join(tmp, '.sword');
   await mkdir(flowDir, { recursive: true });
   await writeFile(join(flowDir, 'broken.json'), '{ broken content');
 

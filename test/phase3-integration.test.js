@@ -7,7 +7,7 @@
 //   2. A 401 is NOT retried (auth needs a config fix, not another attempt) and the
 //      degraded turn emits a structured capability_lost event instead of letting the
 //      fallback prose look like a completed answer.
-//   3. A completed turn appends a usage row to .flow/usage.jsonl.
+//   3. A completed turn appends a usage row to .sword/usage.jsonl.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
@@ -96,10 +96,10 @@ test('a 401 is not retried and emits a capability_lost event', { timeout: 60000 
   assert.equal(out.capability_lost.event, 'capability_lost');
 });
 
-test('a completed turn appends a usage row to .flow/usage.jsonl', async t => {
+test('a completed turn appends a usage row to .sword/usage.jsonl', async t => {
   const cwd = await tempDir('phase3-usage-');
   t.after(() => rm(cwd, { recursive: true, force: true }));
-  await mkdir(join(cwd, '.flow'), { recursive: true });
+  await mkdir(join(cwd, '.sword'), { recursive: true });
   const { base } = await provider(t, () => ({ status: 200, body: answer('done') }));
 
   const { done } = spawnFlow(['--prompt', 'hello world', '--json', '--local'], {
@@ -109,7 +109,7 @@ test('a completed turn appends a usage row to .flow/usage.jsonl', async t => {
   assert.equal(code, 0, stderr);
   assert.equal(JSON.parse(stdout).response, 'done');
 
-  const raw = await readFile(join(cwd, '.flow', 'usage.jsonl'), 'utf8');
+  const raw = await readFile(join(cwd, '.sword', 'usage.jsonl'), 'utf8');
   const lines = raw.split('\n').filter(Boolean);
   assert.equal(lines.length, 1, 'one row per completed turn');
   const row = JSON.parse(lines[0]);

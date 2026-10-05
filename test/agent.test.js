@@ -110,16 +110,16 @@ test('sessions round-trip history, default missing and validate names', async t 
 });
 test('sessions reject corrupt, wrong-project and symlink data', async t => {
   const cwd = await workspace(t);
-  await mkdir(join(cwd, '.flow'));
-  const file = join(cwd, '.flow', 'test.json');
+  await mkdir(join(cwd, '.sword'));
+  const file = join(cwd, '.sword', 'test.json');
   await writeFile(file, '{');
   await assert.rejects(loadSession(cwd, 'test'), SyntaxError);
   await writeFile(file, JSON.stringify({ cwd: 'elsewhere', messages: [] }));
   await assert.rejects(loadSession(cwd, 'test'), /Invalid session/);
-  await symlink(file, join(cwd, '.flow', 'link.json'));
+  await symlink(file, join(cwd, '.sword', 'link.json'));
   await assert.rejects(loadSession(cwd, 'link'), /Unsafe session/);
   const other = await workspace(t);
-  await symlink(join(cwd, '.flow'), join(other, '.flow'));
+  await symlink(join(cwd, '.sword'), join(other, '.sword'));
   await assert.rejects(loadSession(other, 'test'), /Unsafe session/);
 });
 test('provider rejects credentials and config defaults safely', () => {

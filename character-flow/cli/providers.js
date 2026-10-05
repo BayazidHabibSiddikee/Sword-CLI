@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const DEFAULT_FILE = path.join(process.cwd(), '.flow', 'providers.json');
+const DEFAULT_FILE = path.join(process.cwd(), '.sword', 'providers.json');
 let memoryProviders = null;
 
 export function providersPath() {

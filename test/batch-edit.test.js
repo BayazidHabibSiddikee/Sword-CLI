@@ -35,7 +35,7 @@ async function workspace(t, files = {}) {
 }
 
 const residue = async cwd => (await readdir(cwd, { recursive: true }))
-  .filter(name => name.includes('.flow-') || name.endsWith('.tmp'));
+  .filter(name => name.includes('.sword-') || name.endsWith('.tmp'));
 
 test('a valid batch writes every file under one approval and leaves no temp residue', async t => {
   const { cwd, deps, permits } = await workspace(t, { 'a.txt': 'alpha\n', 'b.txt': 'beta\n' });

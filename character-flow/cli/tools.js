@@ -17,7 +17,7 @@ export const toolDefinitions = [
   definition('write_file', 'Create or overwrite text with approval; read existing files first.', { path: string, content: string }, ['path', 'content']),
   definition('edit_file', 'Replace exactly one occurrence in a previously read file with approval.', { path: string, old_text: string, new_text: string }, ['path', 'old_text', 'new_text']),
   definition('run_command', 'Run executable and arguments with approval. No shell parsing; NOT sandboxed.', { command: string, args: { type: 'array', items: string } }, ['command', 'args']),
-  definition('save_to_rag', 'Save a durable note to this project\'s memory (.flow/rag.db) for later sessions. Requires approval.', { category: string, title: string, content: string }, ['category', 'title', 'content']),
+  definition('save_to_rag', 'Save a durable note to this project\'s memory (.sword/rag.db) for later sessions. Requires approval.', { category: string, title: string, content: string }, ['category', 'title', 'content']),
   definition('read_pdf', 'Extract bounded text from a PDF inside the project before summarizing it.', { path: string, max_pages: { type: 'integer' } }, ['path']),
   definition('fetch_web', 'Fetch a public web page over HTTP and return readable Markdown. Fast; cannot execute JavaScript.', { url: string, max_chars: { type: 'integer' } }, ['url']),
   definition('fetch_web_rendered', 'Render a JavaScript-heavy or bot-protected public page with a stealth browser (slower) and return Markdown.', { url: string, max_chars: { type: 'integer' }, timeout_ms: { type: 'integer' } }, ['url'])
@@ -108,13 +108,13 @@ export function createTools({ cwd, approve = async () => false, signal, timeout 
     const category = text(args.category, 'category');
     const title = text(args.title, 'title');
     const content = text(args.content, 'content', true);
-    await mkdir(join(root, '.flow'), { recursive: true, mode: 0o700 });
-    await permit({ tool: 'save_to_rag', path: join('.flow', 'rag.db'), category, title });
+    await mkdir(join(root, '.sword'), { recursive: true, mode: 0o700 });
+    await permit({ tool: 'save_to_rag', path: join('.sword', 'rag.db'), category, title });
     const { RagEngine } = await import('../brain/rag.js');
-    const engine = new RagEngine(join(root, '.flow', 'rag.db'));
+    const engine = new RagEngine(join(root, '.sword', 'rag.db'));
     try {
       const id = engine.insertKnowledge(category.slice(0, 120), title.slice(0, 300), content, 'swordcli');
-      return { saved: true, id: Number(id), category: category.slice(0, 120), path: join('.flow', 'rag.db') };
+      return { saved: true, id: Number(id), category: category.slice(0, 120), path: join('.sword', 'rag.db') };
     } finally {
       try { engine.db?.close(); } catch { /* best effort */ }
     }

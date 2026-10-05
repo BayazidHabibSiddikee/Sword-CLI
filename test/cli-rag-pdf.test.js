@@ -52,7 +52,7 @@ test('save_to_rag requires approval, validates input and is retrievable', async 
   assert.ok(saved.id >= 1);
 
   // The note must be readable back through the shared RAG engine. This used to read
-  // PROJECT/.flow/rag.db while save_to_rag wrote somewhere else entirely, so it passed
+  // PROJECT/.sword/rag.db while save_to_rag wrote somewhere else entirely, so it passed
   // while the feature was broken in production.
   assert.equal(saved.path, join(cwd, 'mem.db'), 'save_to_rag must report the database it actually wrote');
   const engine = new RagEngine(join(cwd, 'mem.db'));

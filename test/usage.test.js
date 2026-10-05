@@ -12,7 +12,7 @@ async function workspace(t) {
   return cwd;
 }
 
-const readRows = async cwd => (await readFile(join(cwd, '.flow', 'usage.jsonl'), 'utf8'))
+const readRows = async cwd => (await readFile(join(cwd, '.sword', 'usage.jsonl'), 'utf8'))
   .split('\n').filter(Boolean).map(line => JSON.parse(line));
 
 test('estimateTokens is ceil(chars/4) and never throws', () => {
@@ -24,7 +24,7 @@ test('estimateTokens is ceil(chars/4) and never throws', () => {
   assert.equal(estimateTokens('x'.repeat(400001)), 100001);
 });
 
-test('a turn appends one JSON line to .flow/usage.jsonl with the documented fields', async t => {
+test('a turn appends one JSON line to .sword/usage.jsonl with the documented fields', async t => {
   const cwd = await workspace(t);
   const tracker = createUsageTracker({ cwd, provider: 'g4f', now: () => 1_700_000_000_000 });
   const row = await tracker.recordTurn({
@@ -89,7 +89,7 @@ test('a usage row never carries a secret, whatever the caller passes', async t =
     model: 'gpt-4o-mini', promptTokens: 10, completionTokens: 10,
     apiKey: 'sk-live-SECRET', authorization: 'Bearer sk-live-SECRET', key: 'sk-live-SECRET',
   });
-  const raw = await readFile(join(cwd, '.flow', 'usage.jsonl'), 'utf8');
+  const raw = await readFile(join(cwd, '.sword', 'usage.jsonl'), 'utf8');
   assert.ok(!raw.includes('SECRET'), 'no caller-supplied credential may reach disk');
   // A whitelist, not a denylist: only the documented keys are ever written.
   assert.deepEqual(Object.keys((await readRows(cwd))[0]).sort(),
@@ -106,11 +106,11 @@ test('session() returns a frozen snapshot that cannot mutate tracker state', asy
   assert.equal(tracker.session().turns, 1);
 });
 
-test('recordTurn creates .flow when absent and clamps unusable counts', async t => {
+test('recordTurn creates .sword when absent and clamps unusable counts', async t => {
   const cwd = await workspace(t);
   const tracker = createUsageTracker({ cwd });
-  await tracker.recordTurn({ model: 'm' }); // no .flow dir yet
-  assert.ok((await stat(join(cwd, '.flow'))).isDirectory());
+  await tracker.recordTurn({ model: 'm' }); // no .sword dir yet
+  assert.ok((await stat(join(cwd, '.sword'))).isDirectory());
   await tracker.recordTurn({ model: 'm', promptTokens: -5, completionTokens: NaN, durationMs: 'fast' });
   const row = (await readRows(cwd))[1];
   assert.equal(row.tokens_in, 0, 'negative and non-numeric counts clamp to 0');
@@ -119,7 +119,7 @@ test('recordTurn creates .flow when absent and clamps unusable counts', async t 
 });
   const tracker = createUsageTracker({ cwd });
   await tracker.recordTurn({ model: 'm', promptTokens: 1, completionTokens: 1 });
-  const file = join(cwd, '.flow', 'usage.jsonl');
+  const file = join(cwd, '.sword', 'usage.jsonl');
   assert.equal((await stat(file)).mode & 0o777, 0o600, 'usage.jsonl must be owner-only');
 
   // appendFile's mode is ignored for an existing file, so a loosened one created

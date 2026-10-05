@@ -70,7 +70,7 @@ function spawnFlow(args, { cwd, env = {} } = {}) {
 test('an over-budget request is projected, degraded and announced before the wire', async t => {
   const cwd = await tempDir('flow-budget-');
   t.after(() => rm(cwd, { recursive: true, force: true }));
-  await mkdir(join(cwd, '.flow'), { recursive: true });
+  await mkdir(join(cwd, '.sword'), { recursive: true });
   // 60 messages ≈ 61k tokens: far above the 20k ceiling configured below, while
   // the irreducible floor (system prompt + tool schemas + current input) fits.
   const messages = [];
@@ -78,7 +78,7 @@ test('an over-budget request is projected, degraded and announced before the wir
     messages.push({ role: 'user', content: `OLDBASE-${i} ` + 'p'.repeat(4000) });
     messages.push({ role: 'assistant', content: 'a'.repeat(4000) });
   }
-  await writeFile(join(cwd, '.flow', 'budget.json'), JSON.stringify({ cwd, messages }));
+  await writeFile(join(cwd, '.sword', 'budget.json'), JSON.stringify({ cwd, messages }));
 
   // Two provider calls: runTurn's tool step and its final answer. Both must be
   // projected and degraded — not just the first one.
@@ -129,7 +129,7 @@ test('an over-budget request is projected, degraded and announced before the wir
 
   // Request-local: the persisted session keeps EVERY message plus the new turn,
   // and still loads (degradation is not allowed to corrupt the session file).
-  const saved = JSON.parse(await readFile(join(cwd, '.flow', 'budget.json'), 'utf8'));
+  const saved = JSON.parse(await readFile(join(cwd, '.sword', 'budget.json'), 'utf8'));
   assert.equal(saved.messages.length, 64, '60 fixture + prompt + tool call + tool result + final answer');
   assert.match(saved.messages[0].content, /OLDBASE-0/, 'nothing was trimmed from the persisted log');
   assert.equal((await loadSession(cwd, 'budget')).length, 64);
@@ -183,7 +183,7 @@ test('/status outside a git repo shows the budget line and no workspace diff', {
 test('archiving keeps the placeholder stub so a resumed session is honest', async t => {
   const cwd = await tempDir('flow-archive-');
   t.after(() => rm(cwd, { recursive: true, force: true }));
-  await mkdir(join(cwd, '.flow'), { recursive: true });
+  await mkdir(join(cwd, '.sword'), { recursive: true });
   // 204 messages > HISTORY_THRESHOLD: the turn pushes it to 206, so the archiver
   // splits (keeping 200) and the stub must land at the head of the retained log.
   const messages = [];
@@ -192,7 +192,7 @@ test('archiving keeps the placeholder stub so a resumed session is honest', asyn
     messages.push({ role: 'assistant', content: 'a'.repeat(200) });
   }
   assert.equal(messages.length, 204);
-  await writeFile(join(cwd, '.flow', 'arch.json'), JSON.stringify({ cwd, messages }));
+  await writeFile(join(cwd, '.sword', 'arch.json'), JSON.stringify({ cwd, messages }));
 
   // Buffered (--json) requests need a plain JSON reply, not the SSE fixture.
   const server = createServer(async (req, res) => {
@@ -227,7 +227,7 @@ test('archiving keeps the placeholder stub so a resumed session is honest', asyn
   assert.match(stderr, /Archived 3 turn\(s\) into knowledge library; kept 201 recent messages\./);
   assert.ok(!/Context over budget/.test(stderr), 'well under budget: no degradation was needed');
 
-  const saved = JSON.parse(await readFile(join(cwd, '.flow', 'arch.json'), 'utf8'));
+  const saved = JSON.parse(await readFile(join(cwd, '.sword', 'arch.json'), 'utf8'));
   assert.equal(saved.messages.length, 201, 'one stub + the 200 retained messages');
   assert.ok(saved.messages[0].content.startsWith(PLACEHOLDER_MARK), 'the stub leads the retained window');
   assert.match(saved.messages[0].content, /3 earlier turn\(s\)/, 'the stub counts what was archived');

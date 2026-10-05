@@ -84,10 +84,10 @@ test('--session resumes local history and RAG retrieval is injected into the sys
   const { tmpdir } = await import('node:os');
   const cwd = join(tmpdir(), `flow-rag-session-${Date.now()}`);
   await mkdir(cwd, { recursive: true });
-  await mkdir(join(cwd, '.flow'), { recursive: true });
+  await mkdir(join(cwd, '.sword'), { recursive: true });
   const sessionName = 'test';
   const prior = [{ role: 'user', content: 'prior turn' }, { role: 'assistant', content: 'prior answer' }];
-  await writeFile(join(cwd, '.flow', `${sessionName}.json`), JSON.stringify({ cwd, messages: prior }));
+  await writeFile(join(cwd, '.sword', `${sessionName}.json`), JSON.stringify({ cwd, messages: prior }));
   t.after(() => rm(cwd, { recursive: true, force: true }));
 
   const server = createServer(async (req, res) => {
@@ -122,7 +122,7 @@ test('RAG failure is graceful and the turn still completes', async t => {
   const { tmpdir } = await import('node:os');
   const cwd = join(tmpdir(), `flow-rag-fail-${Date.now()}`);
   await mkdir(cwd, { recursive: true });
-  await mkdir(join(cwd, '.flow'), { recursive: true });
+  await mkdir(join(cwd, '.sword'), { recursive: true });
   t.after(() => rm(cwd, { recursive: true, force: true }));
 
   // Ensure a RAG DB exists, then move it so search() throws and the catch block runs.

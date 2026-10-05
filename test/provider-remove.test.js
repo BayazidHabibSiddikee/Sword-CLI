@@ -122,8 +122,8 @@ test('/provider remove <id> deletes provider using target argument instead of "r
   await repl.waitAfter(/custom-target/, offset);
   await repl.waitAfter(/sword> /, offset);
 
-  // Read .flow/providers.json to confirm it exists and check its id
-  const provFile = join(cwd, '.flow', 'providers.json');
+  // Read .sword/providers.json to confirm it exists and check its id
+  const provFile = join(cwd, '.sword', 'providers.json');
   assert.ok(existsSync(provFile), 'providers.json must exist');
   let data = JSON.parse(readFileSync(provFile, 'utf8'));
   assert.equal(data.length, 1);

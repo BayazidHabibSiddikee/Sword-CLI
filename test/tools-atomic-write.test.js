@@ -21,7 +21,7 @@ test('an overwrite replaces content and leaves no temp file behind', async t => 
   const written = await execute('write_file', { path: 'f.txt', content: 'replaced\n' });
   assert.equal(written.bytes, Buffer.byteLength('replaced\n'));
   assert.equal(await readFile(join(cwd, 'f.txt'), 'utf8'), 'replaced\n');
-  const residue = (await readdir(cwd)).filter(name => name.includes('.flow-') || name.endsWith('.tmp'));
+  const residue = (await readdir(cwd)).filter(name => name.includes('.sword-') || name.endsWith('.tmp'));
   assert.deepEqual(residue, [], `no temp residue expected, found ${JSON.stringify(residue)}`);
 });
 
@@ -30,7 +30,7 @@ test('a created file holds the exact bytes and leaves no temp residue', async t 
   const written = await execute('write_file', { path: 'new.txt', content: 'fresh\n' });
   assert.equal(written.bytes, Buffer.byteLength('fresh\n'));
   assert.equal(await readFile(join(cwd, 'new.txt'), 'utf8'), 'fresh\n');
-  const residue = (await readdir(cwd)).filter(name => name.includes('.flow-') || name.endsWith('.tmp'));
+  const residue = (await readdir(cwd)).filter(name => name.includes('.sword-') || name.endsWith('.tmp'));
   assert.deepEqual(residue, []);
 });
 
