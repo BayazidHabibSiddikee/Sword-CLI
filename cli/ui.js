@@ -254,11 +254,19 @@ export function thinkingIndicator(stream = process.stderr) {
   let pending = false;
   const indicator = {
     start(text = 'Thinking...') {
-      if (!pending) { pending = true; setBottomBar(text, true); }
+      if (!pending) {
+        pending = true;
+        if (stream.isTTY) setBottomBar(text, true);
+        else stream.write('Thinking…');
+      }
       return indicator;
     },
     stop() {
-      if (pending) { pending = false; setBottomBar(currentText.replace('Thinking...', 'Ready'), false); }
+      if (pending) {
+        pending = false;
+        if (stream.isTTY) setBottomBar(currentText.replace('Thinking...', 'Ready'), false);
+        else stream.write('\n');
+      }
       return indicator;
     }
   };
@@ -321,7 +329,7 @@ function drawBottomBar() {
   const padded = text + ' '.repeat(Math.max(0, cols - visibleLength));
   
   // Save cursor, go to bottom line, print, restore
-  process.stderr.write(`\x1b7\x1b[${rows};1H\x1b[2K\x1b[44m\x1b[37m${padded}\x1b[0m\x1b8`);
+  process.stderr.write(`\x1b7\x1b[${rows};1H\x1b[2K\x1b[100m\x1b[97m${padded}\x1b[0m\x1b8`);
 }
 
 export function initBottomBar() {
@@ -342,6 +350,7 @@ export function initBottomBar() {
     updateFace();
     drawBottomBar();
   }, 100);
+  barInterval.unref();
 }
 
 export function setBottomBar(text, thinking = false) {

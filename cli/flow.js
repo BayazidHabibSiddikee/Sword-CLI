@@ -714,8 +714,7 @@ async function main() {
           const writerPrompt = await brainPrompt(writerName) || `You are ${writerName}. Synthesize team discussions into clear final responses.`;
           const consensus = lastAggregate?.winner ? `\n\nTeam consensus after ${lastAggregate.rounds} round(s): winner ${lastAggregate.winner} — ${formatTeamSummary(lastAggregate)}.` : '';
           const writerInputs = [
-            { role: 'system', content: `${writerPrompt}\n\nYou are the designated writer. Review the team discussion below and produce a single coherent final response that addresses the user's request. Do not reference the team discussion process.${consensus}` },
-            { role: 'system', content: 'TEAM DISCUSSION TRANSCRIPT:\n' +
+            { role: 'system', content: `${writerPrompt}\n\nYou are the designated writer. Review the team discussion below and produce a single coherent final response that addresses the user's request. Do not reference the team discussion process.${consensus}\n\nTEAM DISCUSSION TRANSCRIPT:\n` +
               discussion.map(d => `[${d.character}]: ${d.response}`).join('\n\n') },
             { role: 'user', content: prompt }
           ];
@@ -728,7 +727,10 @@ async function main() {
             onCheckpoint: () => {}
           });
           result = { text: writerResult.text, messages: writerResult.messages };
-        } catch { result = { text: discussion.map(d => `[${d.character}]: ${d.response}`).join('\n\n'), messages: [] }; }
+        } catch (err) {
+          console.error(chalk.red(`\n[Team] Writer failed to synthesize: ${err.message}`));
+          result = { text: discussion.map(d => `[${d.character}]: ${d.response}`).join('\n\n'), messages: [] };
+        }
       } else {
         // Journal approved actions as they complete, so a mid-turn provider
         // failure cannot make already-executed commands disappear from history.
