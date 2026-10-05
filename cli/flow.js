@@ -34,7 +34,7 @@ import { G4F } from 'g4f';
 import {
   cancelMessage, timeoutMessage, toolLine, friendlyError,
   approvePrompt, statusLine, markdownLite, closestCommand,
-  banner, safe, thinkingIndicator
+  banner, safe, thinkingIndicator, initBottomBar, setBottomBar
 } from './ui.js';
 
 // ── RAG + Session singletons ───────────────────────────────────────────────────
@@ -340,6 +340,7 @@ async function main() {
     values.persona = undefined;
   }
   const interactive = Boolean(process.stdin.isTTY && process.stderr.isTTY);
+  if (interactive) initBottomBar();
   if (!values.prompt && !interactive) throw new Error('Non-interactive usage requires --prompt TEXT');
   if (values.prompt !== undefined && !values.prompt.trim()) throw new Error('Prompt must not be empty');
   const cwd = await realpath(values.cwd || process.cwd());
@@ -619,7 +620,7 @@ async function main() {
     if (interactive) {
       // A plain "Thinking…" line: ora's TTY spinner loops forever when the
       // terminal reports 0 columns and puts stdin in raw mode behind readline.
-      indicator = thinkingIndicator().start();
+      indicator = thinkingIndicator().start(` Thinking... | ${activeCharacter || values.persona || 'default'} | ${values.model || 'auto'} `);
     }
     const approve = async proposal => {
       if (!rl) return false;
@@ -1276,6 +1277,7 @@ async function main() {
           rl = makeInterface();
         }
         if (typeof process.stdin.isPaused === 'function' && process.stdin.isPaused()) process.stdin.resume();
+        setBottomBar(` Ready | ${activeCharacter || values.persona || 'default'} | ${values.model || 'auto'} | ${values.session ? values.session : (values.shared ? 'shared' : 'ephemeral')} `, false);
         const asked = await ask(rl);
         if (asked.closed) {
           const reason = asked.reason;

@@ -253,12 +253,12 @@ export function summarizeResult(result) {
 export function thinkingIndicator(stream = process.stderr) {
   let pending = false;
   const indicator = {
-    start() {
-      if (!pending) { pending = true; stream.write('Thinking…'); }
+    start(text = 'Thinking...') {
+      if (!pending) { pending = true; setBottomBar(text, true); }
       return indicator;
     },
     stop() {
-      if (pending) { pending = false; stream.write('\n'); }
+      if (pending) { pending = false; setBottomBar(currentText.replace('Thinking...', 'Ready'), false); }
       return indicator;
     }
   };
@@ -280,3 +280,71 @@ export function banner(opts) {
   lines.push('');
   return lines.join('\n');
 }
+
+// ── Status Bar / Bottom Bar (Persistent TUI) ─────────────────────────────────
+
+let isTUI = false;
+let currentText = '';
+let barInterval = null;
+let frame = 0;
+const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+let isThinking = false;
+
+function drawBottomBar() {
+  if (!isTUI || !process.stderr.isTTY) return;
+  const rows = process.stderr.rows;
+  const cols = process.stderr.columns;
+  if (!rows || !cols) return;
+  
+  const spinner = isThinking ? chalk.cyan(frames[frame % frames.length]) + ' ' : '';
+  const text = ` ${spinner}${currentText} `;
+  // pad to full width
+  const visibleLength = text.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').length;
+  const padded = text + ' '.repeat(Math.max(0, cols - visibleLength));
+  
+  // Save cursor, go to bottom line, print, restore
+  process.stderr.write(`\x1b7\x1b[${rows};1H\x1b[2K\x1b[44m\x1b[37m${padded}\x1b[0m\x1b8`);
+}
+
+export function initBottomBar() {
+  if (!process.stderr.isTTY) return;
+  isTUI = true;
+  const rows = process.stderr.rows;
+  process.stderr.write(`\x1b[1;${rows - 1}r`); // Reserve bottom line
+  
+  process.stderr.on('resize', () => {
+    if (!isTUI) return;
+    const r = process.stderr.rows;
+    process.stderr.write(`\x1b[1;${r - 1}r`);
+    drawBottomBar();
+  });
+  
+  barInterval = setInterval(() => {
+    if (isThinking) {
+      frame++;
+      drawBottomBar();
+    }
+  }, 80);
+}
+
+export function setBottomBar(text, thinking = false) {
+  currentText = text;
+  isThinking = thinking;
+  drawBottomBar();
+}
+
+export function destroyBottomBar() {
+  if (!isTUI) return;
+  isTUI = false;
+  if (barInterval) clearInterval(barInterval);
+  if (process.stderr.isTTY) {
+    const rows = process.stderr.rows;
+    process.stderr.write(`\x1b[r\x1b[${rows};1H\x1b[2K`); // Reset scroll region and clear bottom line
+  }
+}
+
+process.on('exit', destroyBottomBar);
+process.on('SIGINT', () => {
+  destroyBottomBar();
+  process.exit(0);
+});
