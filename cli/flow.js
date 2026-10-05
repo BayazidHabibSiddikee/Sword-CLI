@@ -389,7 +389,63 @@ async function main() {
     console.error('\n(To exit, press Ctrl+C again or Ctrl+D)');
   };
   const makeInterface = () => {
-    const iface = createInterface({ input: process.stdin, output: process.stderr });
+    // Build completions for tab completion
+    const buildCompletions = () => {
+      const completions = new Set();
+      // Slash commands
+      const slashCommands = [
+        'help', 'clear', 'status', 'team', 'models', 'provider',
+        'rag', 'web', 'download', 'scrape', 'undo', 'session',
+        'history', 'brain', 'model', 'character', 'exit', 'quit',
+        'undo', 'routine', 'provider', 'tasks'
+      ];
+      for (const cmd of slashCommands) completions.add(`/${cmd}`);
+      
+      // Routine subcommands
+      const routineSubs = ['add', 'list', 'remove', 'schedule', 'run', 'help'];
+      for (const sub of routineSubs) completions.add(`/routine ${sub}`);
+      
+      // Team subcommands
+      const teamSubs = ['list', 'add', 'remove'];
+      for (const sub of teamSubs) completions.add(`/team ${sub}`);
+      
+      // Character switching
+      try {
+        const chars = loadCharacters(cwd);
+        for (const char of chars) {
+          completions.add(`/character ${char.name}`);
+        }
+      } catch { }
+      
+      // Routine names
+      try {
+        const routines = loadRoutines({ cwd });
+        for (const r of routines.routines) {
+          completions.add(`/routine run ${r.name}`);
+          completions.add(`/routine schedule ${r.name}`);
+          completions.add(`/routine remove ${r.name}`);
+        }
+      } catch { }
+      
+      // Model names
+      try {
+        const models = listModels?.() ?? [];
+        for (const m of models) {
+          completions.add(`/model ${m}`);
+        }
+      } catch { }
+      
+      return Array.from(completions).sort();
+    };
+    
+    const iface = createInterface({
+      input: process.stdin,
+      output: process.stderr,
+      completer: (line) => {
+        const hits = buildCompletions().filter(c => c.startsWith(line));
+        return [hits.length ? hits : [], line];
+      }
+    });
     iface.on('SIGINT', cancel);
     iface.on('error', error => console.error(`\nReadline error: ${error?.message ?? error}`));
     return iface;

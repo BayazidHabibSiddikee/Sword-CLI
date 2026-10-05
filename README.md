@@ -295,8 +295,6 @@ The web dashboard (http://localhost:3002) provides a **Settings** page to config
 
 ---
 
-### Quick Commands (updated)
-
 ```bash
 # Routines
 ./sword.mjs routine add nightly --prompt "Run tests" --schedule daily
@@ -305,6 +303,49 @@ The web dashboard (http://localhost:3002) provides a **Settings** page to config
 ./sword.mjs routine run nightly
 ./sword.mjs routine remove nightly
 ```
+
+---
+
+### Tab Completion (Press Tab after `/`)
+
+The CLI now supports **tab completion** for all commands, subcommands, characters, routines, and models:
+
+```bash
+# Press Tab after typing / to see all available commands
+$ sword /<TAB>
+/help  /clear  /status  /team  /models  /provider  /rag  /web  /download  /scrape  /undo  /session  /history  /brain  /model  /character  /exit  /quit  /undo  /routine  /provider  /tasks
+
+# Character switching
+$ sword /character <TAB>
+/character izuku  /character mahina  /character muhan  /character plastos  ...
+
+# Routine subcommands
+$ sword /routine <TAB>
+/routine add  /routine list  /routine remove  /routine schedule  /routine run  /routine help
+
+# Routine names
+$ sword /routine run <TAB>
+/routine run nightly  /routine run backup  /routine run deploy
+
+# Team subcommands
+$ sword /team <TAB>
+/team list  /team add  /team remove
+
+# Model selection
+$ sword /model <TAB>
+/model gpt-4o  /model gpt-4o-mini  /model claude-3.5-sonnet  ...
+
+# Routine management
+$ sword /routine <TAB>
+/routine add  /routine list  /routine remove  /routine schedule  /routine run  /routine help
+```
+
+**Works with both `sword` and `flow` commands.**
+Just type `/` and press **Tab** to see all available completions!
+
+---
+
+### Quick Commands (updated)
 
 ---
 
