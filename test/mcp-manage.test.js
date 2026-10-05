@@ -101,3 +101,24 @@ test('runMcpCommand rejects an unknown subcommand with a non-zero code', () => {
   }); } finally { console.error = origErr; console.log = origLog; }
 });
 
+
+test('runMcpCommand list does not crash when --cwd is not provided (null cwd)', async () => {
+  // Regression: cmdList used to call mcpConfigPaths({ cwd: null }) which called
+  // path.resolve(null) and threw ERR_INVALID_ARG_TYPE for all users who did not
+  // pass --cwd. Now falls back to process.cwd() safely.
+  let out = '';
+  let err = '';
+  const origLog = console.log;
+  const origErr = console.error;
+  console.log = text => { out += `${text}\n`; };
+  console.error = text => { err += `${text}\n`; };
+  let code;
+  try {
+    code = await runMcpCommand(['mcp', 'list']);
+  } finally {
+    console.log = origLog;
+    console.error = origErr;
+  }
+  assert.equal(code, 0, `mcp list must exit 0 without --cwd; err: ${err}`);
+  assert.match(out, /MCP servers:/);
+});

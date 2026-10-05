@@ -17,7 +17,7 @@ import { RagEngine } from './brain/rag.js';
 import { sessions } from './skills/sessions.js';
 import { loadMcpConfig } from './mcpConfig.js';
 import { runMcpCommand } from './mcpManage.js';
-import { runRoutineCommand } from './routines.js';
+import { runRoutineCommand, loadRoutines } from './routines.js';
 import { closeMcpClients, collectMcpDefinitions } from './mcp/dispatch.js';
 import { listInstalledSkills } from './skills/store.js';
 import { aggregateVotes, formatTeamSummary, parseTeamRounds, TEAM_ROUNDS_DEFAULT } from './team.js';
@@ -409,13 +409,12 @@ async function main() {
       const teamSubs = ['list', 'add', 'remove'];
       for (const sub of teamSubs) completions.add(`/team ${sub}`);
       
-      // Character switching
-      try {
-        const chars = loadCharacters(cwd);
-        for (const char of chars) {
-          completions.add(`/character ${char.name}`);
-        }
-      } catch { }
+      // Character switching: no loadCharacters() API is available yet.
+      // Completions will be populated once a character listing function is added.
+      const chars = [];
+      for (const char of chars) {
+        completions.add(`/character ${char.name}`);
+      }
       
       // Routine names
       try {

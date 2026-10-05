@@ -213,9 +213,12 @@ function listScope(label, config) {
 
 async function cmdList(argv) {
   const { cwd } = parseFlags(argv);
-  const [projectPath, homePath] = mcpConfigPaths({ cwd, env: process.env });
-  const project = loadMcpConfig({ cwd, env: { HOME: '' }, paths: [projectPath] });
-  const global = loadMcpConfig({ cwd: homePath, env: { HOME: '' }, paths: [homePath] });
+  // cwd is null when --cwd is not supplied; mcpConfigPaths calls resolve() which
+  // throws ERR_INVALID_ARG_TYPE on null — fall back to the process working directory.
+  const effectiveCwd = cwd ?? process.cwd();
+  const [projectPath, homePath] = mcpConfigPaths({ cwd: effectiveCwd, env: process.env });
+  const project = loadMcpConfig({ cwd: effectiveCwd, env: { HOME: '' }, paths: [projectPath] });
+  const global = loadMcpConfig({ cwd: homePath ?? '', env: { HOME: '' }, paths: homePath ? [homePath] : [] });
   console.log('MCP servers:');
   listScope('project', project);
   listScope('global', global);
