@@ -1215,7 +1215,8 @@ async function main() {
       return;
     }
 
-    if (line.startsWith('/')) {
+    const firstWord = line.trim().split(/\s+/)[0];
+    if (firstWord.startsWith('/') && !firstWord.substring(1).includes('/')) {
       const suggest = closestCommand(line);
       if (suggest) console.error(`Unknown command. Did you mean /${suggest}? Use /help.`);
       else console.error(`Unknown command. Use /help.`);
