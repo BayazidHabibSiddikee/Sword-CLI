@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Loader2, Save, TestTube, Mail, Bot, BookOpen, Clock, Bell, Save as SaveIcon } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
@@ -84,9 +84,11 @@ export default function SettingsPage() {
   })
 
   // Load initial settings
-  if (settingsData) {
-    setSettings(prev => ({ ...prev, ...settingsData }))
-  }
+  useEffect(() => {
+    if (settingsData) {
+      setSettings(prev => ({ ...prev, ...settingsData }))
+    }
+  }, [settingsData])
 
   const saveMut = useMutation({
     mutationFn: saveSettings,
