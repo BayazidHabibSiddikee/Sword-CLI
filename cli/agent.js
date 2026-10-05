@@ -141,7 +141,7 @@ export async function runTurn({ messages, request, execute, maxSteps = 20, onEve
   // edit segments with ONE approval + ONE checkpoint; without it mutations run
   // one by one. Function check, not truthiness.
   const batchFn = typeof execute?.batch === 'function' ? execute.batch : undefined;
-  const mcpDispatch = typeof execute?.mcp === 'function' ? execute.mcp : null;
+  const mcpDispatch = typeof execute?.mcp === 'function' ? execute.mcp : (typeof execute === 'function' ? execute : null);
   const runOne = async entry => {
     if (entry.argsError) return { error: entry.argsError };
     // Phase 4: mcp__ tools route to the MCP dispatcher (permit gate + timeout

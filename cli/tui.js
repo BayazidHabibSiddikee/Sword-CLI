@@ -4,6 +4,8 @@
  * Features: persistent sessions, auto-discovered skills, git ops, file editing, task tracking
  */
 import readline from 'readline';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import chalk from 'chalk';
 import { LangGraphAgent } from './langgraph-agent.js';
 import * as bridge from './skills/bridge.js';
@@ -398,7 +400,7 @@ async function handleCommand(input) {
    Messages:      ${session.message_count}
    Created:       ${new Date(session.created_at).toLocaleString()}
    Last active:   ${session.last_interaction ? new Date(session.last_interaction).toLocaleString() : 'never'}
-   Persisted:     ${require('fs').existsSync(require('path').join('./data/sessions', `${currentChar}.json`)) ? 'yes' : 'no'}
+   Persisted:     ${existsSync(join('./data/sessions', `${currentChar}.json`)) ? 'yes' : 'no'}
    ─────────────────────────────────────
 `));
     return null;

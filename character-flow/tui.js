@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 console.error('[DEPRECATED] Use `bin/sword` instead. The legacy character-flow/character-flow/tui.js is no longer supported.');
 process.exit(1);
 
@@ -324,7 +326,7 @@ async function handleCommand(input) {
    Messages:      ${session.message_count}
    Created:       ${new Date(session.created_at).toLocaleString()}
    Last active:   ${session.last_interaction ? new Date(session.last_interaction).toLocaleString() : 'never'}
-   Persisted:     ${require('fs').existsSync(require('path').join('./data/sessions', `${currentChar}.json`)) ? 'yes' : 'no'}
+   Persisted:     ${existsSync(join('./data/sessions', `${currentChar}.json`)) ? 'yes' : 'no'}
    ─────────────────────────────────────
 `));
     return null;

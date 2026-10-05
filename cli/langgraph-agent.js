@@ -15,7 +15,9 @@
 // instead of this LangGraph graph. This file stays so the web server (server.js)
 // and any future LangGraph-native paths keep a real implementation to build on.
 
-const _require = createRequire(import.meta.url);
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const _require = require;
 const DEFAULT_OPENAI_BASE_URL = (process.env.OPENAI_BASE_URL || 'http://localhost:3001/v1').replace(/\/+$/, '').replace(/\/v1$/, '');
 const DEFAULT_OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 

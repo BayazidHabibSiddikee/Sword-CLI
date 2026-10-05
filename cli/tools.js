@@ -696,6 +696,19 @@ export function createTools({ cwd, approve = async () => false, signal, timeout 
       return { path: written?.path ?? item.path, bytes: written?.bytes ?? 0, sandbox: 'none', batch: true };
     });
   };
+  // MCP remote tool execution dispatcher: bridges tool executor to dispatchMcpCall
+  run.mcp = async (name, args) => {
+    if (!mcpServers?.length) {
+      return { error: 'No MCP servers are configured. Add one to .sword/mcp.json to enable remote tools.' };
+    }
+    return dispatchMcpCall(name, args, {
+      servers: mcpServers,
+      permit: mcpPermit,
+      connectTimeoutMs: MCP_CONNECT_TIMEOUT_MS,
+      callTimeoutMs: Math.max(10000, Math.min(MCP_CALL_TIMEOUT_MS, timeout || MCP_CALL_TIMEOUT_MS))
+    });
+  };
+
   // Turn-scoped checkpoint control, consumed by /undo rather than the model. Exposed
   // as a property so the REPL can drive it without adding a model-visible tool.
   run.checkpoint = {

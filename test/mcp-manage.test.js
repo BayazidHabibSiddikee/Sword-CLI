@@ -55,6 +55,7 @@ test('removeServer deletes from both shapes without touching others', () => {
   const mapData = { mcpServers: { a: { command: 'a' }, b: { command: 'b' } } };
   assert.equal(removeServer(mapData, 'a'), true);
   assert.deepEqual(Object.keys(mapData.mcpServers), ['b']);
+  assert.equal(removeServer(mapData, 'ghost'), false);
   const arrData = { servers: [{ name: 'a', command: 'a' }, { name: 'b', command: 'b' }] };
   assert.equal(removeServer(arrData, 'b'), true);
   assert.deepEqual(arrData.servers.map(s => s.name), ['a']);
@@ -122,3 +123,18 @@ test('runMcpCommand list does not crash when --cwd is not provided (null cwd)', 
   assert.equal(code, 0, `mcp list must exit 0 without --cwd; err: ${err}`);
   assert.match(out, /MCP servers:/);
 });
+
+test('runMcpCommand remove fails with exit 1 on non-existent server', async () => {
+  let err = '';
+  const origErr = console.error;
+  console.error = text => { err += `${text}\n`; };
+  let code;
+  try {
+    code = await runMcpCommand(['mcp', 'remove', 'definitely_nonexistent_server_12345']);
+  } finally {
+    console.error = origErr;
+  }
+  assert.equal(code, 1, `mcp remove non-existent must exit 1, got code: ${code}`);
+  assert.match(err, /not found/);
+});
+

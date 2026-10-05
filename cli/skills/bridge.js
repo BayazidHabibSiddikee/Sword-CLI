@@ -5,7 +5,7 @@
  */
 import { execSync } from 'child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 'fs';
-import path from 'path';
+import path, { join } from 'path';
 
 // Bridge paths — configured via env, falling back to project-relative defaults.
 // Set SWORD_TOOLS_DIR, SWORD_RESULTS_DIR, and SWORD_TOOL_BRIDGE to override.

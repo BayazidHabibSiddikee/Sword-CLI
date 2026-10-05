@@ -153,9 +153,12 @@ function removeServer(data, name) {
     if (idx >= 0) { c.map.splice(idx, 1); return true; }
     return false;
   }
+  if (!c.map || !Object.prototype.hasOwnProperty.call(c.map, name)) {
+    return false;
+  }
   if (c.key === 'servers') { delete c.map[name]?.name; }
-  const removed = delete c.map[name];
-  return removed;
+  delete c.map[name];
+  return true;
 }
 
 // ── subcommand handlers ───────────────────────────────────────────────────────
