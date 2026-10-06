@@ -57,8 +57,8 @@ Ensure you have **Node.js (v18+)** installed.
 
 ```bash
 # Clone the repository
-git clone https://github.com/BayazidHabibSiddikee/character-flow.git
-cd character-flow
+https://github.com/BayazidHabibSiddikee/Sword-CLI.git
+cd Sword-CLI
 
 # Install dependencies
 npm install
