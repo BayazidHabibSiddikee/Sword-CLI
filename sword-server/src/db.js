@@ -4,7 +4,7 @@
 //   sessions(id, title, workdir, model, created_at, updated_at)
 //   messages(id, session_id, role, content, tool_calls, tool_call_id, name, created_at)
 //   settings(key, value) — holds routing strategy + generated bearer token
-import Database from 'better-sqlite3';
+import Database from 'better-sqlite3-multiple-ciphers';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -20,7 +20,36 @@ export function getDb() {
   if (db) return db;
   fs.mkdirSync(DATA_DIR, { recursive: true });
   const fresh = !fs.existsSync(DB_FILE);
+
+  let dbKey = 'default_secret';
+  const keyPath = path.resolve(DATA_DIR, 'db.key');
+  if (fs.existsSync(keyPath)) {
+    dbKey = fs.readFileSync(keyPath, 'utf8').trim();
+  } else {
+    dbKey = crypto.randomBytes(32).toString('hex');
+    fs.writeFileSync(keyPath, dbKey, { mode: 0o600 });
+  }
+
   db = new Database(DB_FILE);
+  
+  let needsKey = false;
+  try {
+    db.prepare('SELECT count(*) FROM sqlite_master').get();
+  } catch (err) {
+    if (err.message.includes('file is not a database') || err.message.includes('encrypted') || err.message.includes('not an error')) {
+      needsKey = true;
+    } else {
+      throw err;
+    }
+  }
+
+  if (needsKey) {
+    db.pragma(`key = '${dbKey}'`);
+  } else {
+    db.pragma('journal_mode = DELETE');
+    db.pragma(`rekey = '${dbKey}'`);
+  }
+
   db.pragma('journal_mode = WAL');
   db.exec(`
     CREATE TABLE IF NOT EXISTS providers (

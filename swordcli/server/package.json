@@ -17,9 +17,10 @@
     "sword": "node bin/sword-cli.mjs"
   },
   "dependencies": {
-    "@swordcli/shared": "*",
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "@swordcli/shared": "*",
     "better-sqlite3": "^12.10.0",
+    "better-sqlite3-multiple-ciphers": "^13.0.3",
     "cors": "^2.8.5",
     "dotenv": "^17.4.2",
     "express": "^5.1.0",

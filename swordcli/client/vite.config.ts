@@ -1,5 +1,6 @@
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
+import basicSsl from '@vitejs/plugin-basic-ssl'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
 
@@ -8,7 +9,7 @@ export default defineConfig(({ mode }) => {
   const serverPort = env.PORT ?? process.env.PORT ?? 3001
 
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), basicSsl()],
     base: process.env.VITE_BASE ?? '/',
     envDir: path.resolve(__dirname, '..'),
     define: {

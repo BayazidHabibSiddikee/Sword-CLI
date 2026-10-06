@@ -2,7 +2,7 @@
   "name": "sword-server",
   "version": "1.0.0",
   "private": true,
-  "description": "Minimal independent Sword backend \u2014 provider router + agent loop + shared sessions. No freellmapi dependency.",
+  "description": "Minimal independent Sword backend — provider router + agent loop + shared sessions. No freellmapi dependency.",
   "type": "module",
   "scripts": {
     "dev": "node src/index.js",
@@ -11,11 +11,13 @@
   },
   "dependencies": {
     "better-sqlite3": "^12.10.0",
+    "better-sqlite3-multiple-ciphers": "^13.0.3",
     "cors": "^2.8.5",
     "dotenv": "^17.4.2",
     "express": "^5.1.0"
   },
   "allowScripts": {
-    "better-sqlite3@12.11.1": true
+    "better-sqlite3@12.11.1": true,
+    "better-sqlite3-multiple-ciphers": true
   }
 }

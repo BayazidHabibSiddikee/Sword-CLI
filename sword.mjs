@@ -38,11 +38,23 @@ const WEB_PORT = process.env.SWORD_WEB_PORT || '3002';
 function swordToken() {
   if (process.env.SWORD_TOKEN?.trim()) return process.env.SWORD_TOKEN.trim();
   try {
-    // -readonly + a busy timeout: this read races the server's own writes on
-    // boot, and a bare `database is locked` failure here silently drops the
-    // token — which sends the agent into g4f fallback with no explanation.
-    return execSync(`sqlite3 -readonly -cmd \".timeout 2000\" ${join(SWORD_SERVER_DIR, 'data', 'sword.db')} "SELECT value FROM settings WHERE key='api_token';"`, { encoding: 'utf8' }).trim();
-  } catch { return ''; }
+    return execSync(`node -e "
+      const fs = require('fs');
+      const path = require('path');
+      const dbPath = path.join('${SWORD_SERVER_DIR}', 'data', 'sword.db');
+      const keyPath = path.join('${SWORD_SERVER_DIR}', 'data', 'db.key');
+      if (!fs.existsSync(dbPath)) process.exit(0);
+      const db = require('better-sqlite3-multiple-ciphers')(dbPath, { readonly: true });
+      if (fs.existsSync(keyPath)) {
+        db.pragma(\\"key = '\\" + fs.readFileSync(keyPath, 'utf8').trim() + \\"'\\");
+      }
+      db.pragma('busy_timeout = 2000');
+      const row = db.prepare(\\"SELECT value FROM settings WHERE key='api_token'\\").get();
+      if (row) console.log(row.value);
+    "`, { cwd: SWORD_SERVER_DIR, encoding: 'utf8' }).trim();
+  } catch (e) {
+    return '';
+  }
 }
 
 function pidFile(name) { return join(PID_DIR, `${name}.pid`); }
@@ -84,6 +96,16 @@ async function backendInfo(port) {
   return info;
 }
 async function portOpen(port, path = '/') {
+  if (String(port) === String(WEB_PORT)) {
+    const net = await import('node:net');
+    return new Promise(resolve => {
+      const socket = net.createConnection(port, '127.0.0.1');
+      socket.setTimeout(2000);
+      socket.once('connect', () => { socket.destroy(); resolve(true); });
+      socket.once('error', () => resolve(false));
+      socket.once('timeout', () => { socket.destroy(); resolve(false); });
+    });
+  }
   try {
     const r = await fetch(`http://127.0.0.1:${port}${path}`, { signal: AbortSignal.timeout(3000) });
     return r.status < 500;
@@ -223,7 +245,21 @@ function warnMissingOllamaModels() {
 /** Read a single scalar from a local sqlite DB (best-effort, busy-timeout). */
 function sqliteOne(dbPath, sql) {
   try {
-    return execSync(`sqlite3 -readonly -cmd ".timeout 2000" '${dbPath}' "${sql}"`, { encoding: 'utf8' }).trim();
+    const keyPath = join(dirname(dbPath), 'db.key');
+    return execSync(`node -e "
+      const fs = require('fs');
+      const db = require('better-sqlite3-multiple-ciphers')('${dbPath}', { readonly: true });
+      if (fs.existsSync('${keyPath}')) {
+        db.pragma(\\"key = '\\" + fs.readFileSync('${keyPath}', 'utf8').trim() + \\"'\\");
+      }
+      db.pragma('busy_timeout = 2000');
+      const stmt = db.prepare(\\"${sql}\\");
+      const row = stmt.get();
+      if (row) {
+        const keys = Object.keys(row);
+        if (keys.length > 0) console.log(row[keys[0]]);
+      }
+    "`, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }).trim();
   } catch { return ''; }
 }
 
@@ -253,20 +289,30 @@ async function localSwordcliKey() {
  * restart needed.
  */
 async function registerSwordcliProvider() {
-  const db = join(SWORD_SERVER_DIR, 'data', 'sword.db');
-  if (!existsSync(db)) return 'no-sword-db';
+  const dbPath = join(SWORD_SERVER_DIR, 'data', 'sword.db');
+  const keyPath = join(SWORD_SERVER_DIR, 'data', 'db.key');
+  if (!existsSync(dbPath)) return 'no-sword-db';
   const key = await localSwordcliKey();
   if (!key) return 'no-key';
   const base = `http://127.0.0.1:${SWORDCLI_PORT}/v1`;
   const safeKey = key.replace(/'/g, "''");
   try {
-    execSync(
-      `sqlite3 -cmd ".timeout 2000" '${db}' "DELETE FROM providers WHERE name='local-swordcli' OR base_url='${base}';` +
-      ` INSERT INTO providers(name, base_url, api_key, model) VALUES('local-swordcli','${base}','${safeKey}','');"`,
-      { stdio: 'ignore' }
-    );
+    execSync(`node -e "
+      const fs = require('fs');
+      const db = require('better-sqlite3-multiple-ciphers')('${dbPath}');
+      if (fs.existsSync('${keyPath}')) {
+        db.pragma(\\"key = '\\" + fs.readFileSync('${keyPath}', 'utf8').trim() + \\"'\\");
+      }
+      db.pragma('busy_timeout = 2000');
+      const stmtDelete = db.prepare(\\"DELETE FROM providers WHERE name='local-swordcli' OR base_url='${base}'\\");
+      const stmtInsert = db.prepare(\\"INSERT INTO providers(name, base_url, api_key, model) VALUES('local-swordcli', '${base}', '${safeKey}', '')\\");
+      const txn = db.transaction(() => { stmtDelete.run(); stmtInsert.run(); });
+      txn();
+    "`, { cwd: SWORD_SERVER_DIR, stdio: 'ignore' });
     return 'registered';
-  } catch { return 'failed'; }
+  } catch (e) {
+    return 'failed';
+  }
 }
 
 function stop(name) {

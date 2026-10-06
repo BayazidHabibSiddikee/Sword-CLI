@@ -9,7 +9,7 @@ const PORT = process.env.PORT ?? 3001;
 // Dual-stack ('::') by default so the dashboard is reachable over both IPv4
 // and IPv6 (e.g. IPv6-enabled Docker networks — #180). Hosts with IPv6
 // disabled fall back to IPv4-only below; HOST overrides the default outright.
-const HOST = process.env.HOST ?? '::';
+const HOST = process.env.HOST ?? '127.0.0.1';
 
 async function main() {
   initDb();
@@ -55,7 +55,7 @@ async function main() {
     // fail-fast posture documented in main().catch below.
     if (!process.env.HOST && (err.code === 'EAFNOSUPPORT' || err.code === 'EADDRNOTAVAIL')) {
       console.warn('[server] IPv6 unavailable on this host — falling back to 0.0.0.0 (IPv4-only)');
-      app.listen(Number(PORT), '0.0.0.0', onReady('0.0.0.0'));
+      app.listen(Number(PORT), '127.0.0.1', onReady('127.0.0.1'));
       return;
     }
     let hint = '';

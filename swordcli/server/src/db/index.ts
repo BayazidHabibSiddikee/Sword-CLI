@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import Database from 'better-sqlite3';
+import Database from 'better-sqlite3-multiple-ciphers';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -28,7 +28,38 @@ export function initDb(dbPath?: string): Database.Database {
     }
   }
 
+  // Get or create DB key
+  let dbKey = 'default_secret';
+  if (!isMemory) {
+    const keyPath = path.resolve(path.dirname(resolvedPath), 'db.key');
+    if (fs.existsSync(keyPath)) {
+      dbKey = fs.readFileSync(keyPath, 'utf8').trim();
+    } else {
+      dbKey = crypto.randomBytes(32).toString('hex');
+      fs.writeFileSync(keyPath, dbKey, { mode: 0o600 });
+    }
+  }
+
   db = new Database(resolvedPath);
+  
+  let needsKey = false;
+  try {
+    db.prepare('SELECT count(*) FROM sqlite_master').get();
+  } catch (err: any) {
+    if (err.message.includes('file is not a database') || err.message.includes('encrypted') || err.message.includes('not an error')) {
+      needsKey = true;
+    } else {
+      throw err;
+    }
+  }
+
+  if (needsKey) {
+    db.pragma(`key = '${dbKey}'`);
+  } else if (!isMemory) {
+    db.pragma('journal_mode = DELETE');
+    db.pragma(`rekey = '${dbKey}'`);
+  }
+
   if (!isMemory) db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
 
