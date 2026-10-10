@@ -334,6 +334,23 @@ async function main() {
         console.log(c.green(`new session ${current.id.slice(0, 8)} → ${current.workdir}`));
         continue;
       }
+
+      if (input === '/lab') {
+        console.log(c.magenta ? c.magenta('Booting LAB_Expert workspace...') : c.cyan('Booting LAB_Expert workspace...'));
+        const labRun = '/home/sword/Documents/LAB_Expert/run.sh';
+        const p = spawn('bash', [labRun], {
+          cwd: '/home/sword/Documents/LAB_Expert',
+          stdio: 'ignore',
+          detached: true
+        });
+        p.unref();
+        console.log(c.dim('LAB_Expert spawned in background. Opening http://localhost:5173'));
+        
+        try {
+          spawn('xdg-open', ['http://localhost:5173'], { detached: true }).unref();
+        } catch(e) {}
+        continue;
+      }
       if (input.startsWith('/')) {
         console.log(c.dim('Unknown command. Try /sessions /new /model /character /voice /tools /status /quit'));
         continue;
