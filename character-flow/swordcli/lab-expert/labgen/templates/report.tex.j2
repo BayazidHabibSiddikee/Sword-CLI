@@ -1,0 +1,170 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{graphicx}
+\usepackage{geometry}
+\usepackage{amsmath}
+% Font: mathptmx provides Times New Roman body + math fonts and works with
+% both pdflatex and tectonic without requiring the tgtermes package.
+\usepackage{mathptmx}
+\usepackage[font={small,it}]{caption}
+\usepackage{float}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{siunitx}
+\usepackage{sectsty}
+\sectionfont{\fontsize{12}{14}\bfseries\selectfont}
+
+\geometry{
+  a4paper,
+  left=25mm,
+  right=25mm,
+  top=25mm,
+  bottom=25mm,
+}
+
+\begin{document}
+
+% --- Cover Page ---
+\begin{titlepage}
+    \centering
+    \vspace*{1cm}
+
+    {% if config.university %}
+    \Large \textbf{\MakeUppercase{ {{ config.university | latex_escape }} }} \\
+    \vspace{0.5cm}
+    {% endif %}
+    {% if config.department %}
+    \large \textbf{\MakeUppercase{ {{ config.department | latex_escape }} }} \\
+    \vspace{2.5cm}
+    {% endif %}
+
+    \Large \textbf{LABORATORY REPORT} \\
+    \vspace{1cm}
+
+    \begin{tabular}{ll}
+        \textbf{Course No:} & {{ config.course_code | latex_escape if config.course_code else "---" }} \\
+        \textbf{Course Title:} & {{ config.course_name | latex_escape if config.course_name else "---" }} \\
+    \end{tabular}
+
+    \vspace{2cm}
+
+    \textbf{Experiment No:} {{ experiment_no }} \\
+    \vspace{0.5cm}
+    \textbf{Name of the Experiment:} \\
+    \Large \textbf{ {{ experiment_name | latex_escape }} } \\
+
+    \vspace{2.5cm}
+
+    \begin{minipage}[t]{0.4\textwidth}
+        \begin{flushleft} \large
+            \emph{Submitted by:}\\
+            {% if config.student.name %}{{ config.student.name | latex_escape }} \\{% endif %}
+            {% if config.student.roll %}Roll: {{ config.student.roll | latex_escape }} \\{% endif %}
+            {% if config.student.section or config.student.group %}Section: {{ config.student.section | latex_escape if config.student.section else "---" }}, Group: {{ config.student.group | latex_escape if config.student.group else "---" }}{% endif %}
+        \end{flushleft}
+    \end{minipage}
+    \hfill
+    \begin{minipage}[t]{0.5\textwidth}
+        \begin{flushright} \large
+            \emph{Submitted to:} \\
+            {% if config.teachers %}
+            {% for teacher in config.teachers %}
+            {% if teacher.name %}{{ teacher.name | latex_escape }} \\{% endif %}
+            {% if teacher.designation %}{{ teacher.designation | latex_escape }}{% if not loop.last %} \\{% endif %}{% endif %}
+            {% if not loop.last %}\vspace{0.3cm}{% endif %}
+            {% endfor %}
+            {% else %}
+            --- \\
+            {% endif %}
+        \end{flushright}
+    \end{minipage}
+
+    \vfill
+    \textbf{Date of Performance:} {{ date_performance }} \\
+    \textbf{Date of Submission:} {{ date_submission }}
+
+\end{titlepage}
+
+% --- Main Content ---
+\setcounter{page}{1}
+\normalsize
+
+\begin{center}
+    \textbf{Experiment No:} {{ experiment_no }} \\
+    \vspace{0.2cm}
+    \textbf{Name of the Experiment:} {{ experiment_name | latex_escape }}
+\end{center}
+\vspace{0.5cm}
+
+{% if sections.objectives %}
+\section{Objectives}
+\begin{itemize}
+{% for obj in sections.objectives %}
+    \item {{ obj }}
+{% endfor %}
+\end{itemize}
+{% endif %}
+
+\section{Introduction}
+{{ sections.theory }}
+
+{% if theory_img %}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{ {{- theory_img | latex_path -}} }
+    \caption{Reference Diagram}
+\end{figure}
+{% endif %}
+
+\section{Circuit Design}
+{{ sections.circuit_design }}
+
+{% if circuit_img %}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{ {{- circuit_img | latex_path -}} }
+    \caption{Experimental Circuit Diagram}
+\end{figure}
+{% endif %}
+
+\section{Required Apparatus}
+\begin{itemize}
+{% for app in sections.apparatus %}
+    \item {{ app.name | latex_escape }} (Quantity: {{ app.quantity }})
+{% endfor %}
+\end{itemize}
+
+\section{Procedure}
+\begin{enumerate}
+{% for step in sections.procedure %}
+    \item {{ step }}
+{% endfor %}
+\end{enumerate}
+
+\section{Result}
+{{ sections.data_table_latex }}
+
+{% for plot in plots %}
+{% if plot.path %}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{ {{- plot.path | latex_path -}} }
+    \caption{ {{ plot.caption | latex_escape }} }
+\end{figure}
+{% endif %}
+{% endfor %}
+
+\section{Discussion}
+{{ sections.discussion }}
+
+\section{Conclusion}
+{{ sections.conclusion }}
+
+\section{References}
+\begin{enumerate}
+{% for ref in sections.references %}
+    \item {{ ref }}
+{% endfor %}
+\end{enumerate}
+
+\end{document}

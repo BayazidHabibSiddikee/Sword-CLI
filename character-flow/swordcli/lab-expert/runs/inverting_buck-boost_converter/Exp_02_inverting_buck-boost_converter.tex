@@ -1,0 +1,194 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{graphicx}
+\usepackage{geometry}
+\usepackage{amsmath}
+\usepackage{tgtermes} % Times New Roman equivalent for XeTeX
+\usepackage[font={small,it}]{caption} % size 11 (small is 11pt for 12pt document) and italic
+\usepackage{float}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{siunitx}
+\usepackage{sectsty} % For customizing section headings
+% In a 12pt document, \normalsize is 12pt. \bfseries makes it bold.
+\sectionfont{\fontsize{12}{14}\bfseries\selectfont} 
+
+\geometry{
+  a4paper,
+  left=25mm,
+  right=25mm,
+  top=25mm,
+  bottom=25mm,
+}
+
+\begin{document}
+
+% --- Cover Page ---
+\begin{titlepage}
+    % Use sans-serif or default for cover if desired, but we will let it be Times as per standard or we can use \sffamily
+    \sffamily
+    \centering
+    \vspace*{1cm}
+    
+    
+    
+    
+    \Large \textbf{LABORATORY REPORT} \\
+    \vspace{1cm}
+    
+    \begin{tabular}{ll}
+        \textbf{Course No:} & — \\
+        \textbf{Course Title:} & — \\
+    \end{tabular}
+    
+    \vspace{2cm}
+    
+    \textbf{Experiment No:} 02 \\
+    \vspace{0.5cm}
+    \textbf{Name of the Experiment:} \\
+    \Large \textbf{ Inverting buck-boost converter } \\
+    
+    \vspace{2.5cm}
+    
+    \begin{minipage}[t]{0.4\textwidth}
+        \begin{flushleft} \large
+            \emph{Submitted by:}\\
+            
+            
+            
+        \end{flushleft}
+    \end{minipage}
+    \hfill
+    \begin{minipage}[t]{0.5\textwidth}
+        \begin{flushright} \large
+            \emph{Submitted to:} \\
+            
+            — \\
+            
+        \end{flushright}
+    \end{minipage}
+
+    \vfill
+    \textbf{Date of Performance:} October 10, 2026 \\
+    \textbf{Date of Submission:} October 17, 2026
+    
+\end{titlepage}
+
+% --- Main Content ---
+\setcounter{page}{1}
+\rmfamily % Ensure we are back to Times Roman
+\normalsize
+
+\begin{center}
+    \textbf{Experiment No:} 02 \\
+    \vspace{0.2cm}
+    \textbf{Name of the Experiment:} Inverting buck-boost converter
+\end{center}
+\vspace{0.5cm}
+
+
+\section{Objectives}
+\begin{itemize}
+
+    \item To study and analyze the operation of the Inverting buck-boost converter.
+
+    \item To simulate the response and examine parameters under varying supply conditions.
+
+    \item To verify theoretical relationships and behaviors.
+
+\end{itemize}
+
+
+\section{Introduction}
+The Inverting buck-boost converter operates based on fundamental principles of its respective domain. The conversion dynamics and functional relationships are governed by core governing equations. Experimental verification involves observing output ripple, transient settling, and characteristic performance.
+
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{/home/sword/Documents/LAB_Expert/runs/inverting_buck-boost_converter/figs/theory_img.png}
+    \caption{Reference diagram}
+\end{figure}
+
+
+\section{Circuit Design}
+The inverting buck-boost converter consists of a DC input source, a controlled power switch, an energy storage inductor, a fast recovery diode, an output filter capacitor, and a load resistor. When the switch is closed, energy is stored in the magnetic field of the inductor while the diode is reverse-biased. When the switch opens, the inductor releases its stored energy through the diode into the capacitor and load resistor. Because of the counter-electromotive force, the output voltage polarity is inverted relative to the ground reference. The conversion ratio in continuous conduction mode (CCM) is given by $V_{\text{out}} = -V_{\text{in}} \cdot \frac{D}{1 - D}$.
+
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{/home/sword/Documents/LAB_Expert/runs/inverting_buck-boost_converter/figs/schematic.png}
+    \caption{Experimental Circuit Diagram}
+\end{figure}
+
+
+\section{Required Apparatus}
+\begin{itemize}
+
+    \item DC Regulated Power Supply (0-30V, 5A) (Quantity: 1)
+
+    \item Power MOSFET / Switching Transistor (Quantity: 1)
+
+    \item Fast Recovery Power Diode (1N5819 / Ultra-fast) (Quantity: 1)
+
+    \item Toroidal Inductor (100 uH, 3A) (Quantity: 1)
+
+    \item Electrolytic Filter Capacitor (470 uF, 50V) (Quantity: 1)
+
+    \item Decade Resistance Box / Power Resistor (10 Ohm, 50W) (Quantity: 1)
+
+    \item Digital Storage Oscilloscope (DSO 100MHz) (Quantity: 1)
+
+    \item PWM Function Generator (Quantity: 1)
+
+\end{itemize}
+
+\section{Procedure}
+\begin{enumerate}
+
+    \item Connect the circuit components as indicated in the schematic diagram.
+
+    \item Verify all connections and safety protocols before applying power.
+
+    \item Slowly sweep the primary parameter and record corresponding measurements.
+
+    \item Tabulate the data and plot the performance characteristics for analysis.
+
+\end{enumerate}
+
+\section{Result}
+
+
+
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{/home/sword/Documents/LAB_Expert/runs/inverting_buck-boost_converter/figs/inverting_buck-boost_converter_plot.png}
+    \caption{ Simulated Inverting buck-boost converter DC Characteristics }
+\end{figure}
+
+
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{/home/sword/Documents/LAB_Expert/runs/inverting_buck-boost_converter/figs/inverting_buck-boost_converter_tran_plot.png}
+    \caption{ Simulated Inverting buck-boost converter Transient Response }
+\end{figure}
+
+
+
+\section{Discussion}
+The simulated waveforms and parameters conformed closely to theoretical expectations. Minor deviations are attributable to non-ideal component properties, switching resistances, and parasitic elements. As the demand was varied, the performance scaled proportionally as expected.
+
+\section{Conclusion}
+The experimental investigation and simulation of the Inverting buck-boost converter was successfully performed. The functional relationships between input, load parameters, and control variables were validated.
+
+\section{References}
+\begin{enumerate}
+
+    \item Generated by LabGen Knowledge Hub API
+
+    \item Ngspice Simulation Data.
+
+\end{enumerate}
+
+\end{document}

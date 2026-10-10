@@ -1,0 +1,111 @@
+{
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devPath": "http://localhost:5173",
+    "distDir": "../dist",
+    "withGlobalTauri": true
+  },
+  "package": {
+    "productName": "LabGen Cyberdeck",
+    "version": "2.4.1"
+  },
+  "tauri": {
+    "allowlist": {
+      "all": false,
+      "shell": {
+        "all": false,
+        "open": true,
+        "command": true,
+        "execute": true,
+        "scope": [
+          {
+            "name": "freecadcmd",
+            "cmd": "freecadcmd",
+            "args": []
+          },
+          {
+            "name": "ngspice",
+            "cmd": "ngspice",
+            "args": ["-b"]
+          },
+          {
+            "name": "tectonic",
+            "cmd": "tectonic",
+            "args": []
+          },
+          {
+            "name": "python",
+            "cmd": "python",
+            "args": []
+          }
+        ]
+      },
+      "window": {
+        "all": false,
+        "close": true,
+        "hide": true,
+        "show": true,
+        "maximize": true,
+        "minimize": true,
+        "unmaximize": true,
+        "unminimize": true,
+        "startDragging": true
+      },
+      "fs": {
+        "all": false,
+        "readFile": true,
+        "writeFile": true,
+        "readDir": true,
+        "copyFile": true,
+        "createDir": true,
+        "removeFile": true,
+        "removeDir": true,
+        "scope": ["$APPDATA/*", "$HOME/*", "$TEMP/*"]
+      },
+      "dialog": {
+        "all": false,
+        "open": true,
+        "save": true
+      },
+      "notification": {
+        "all": true
+      },
+      "globalShortcut": {
+        "all": true
+      }
+    },
+    "bundle": {
+      "active": true,
+      "targets": "all",
+      "identifier": "com.labgen.cyberdeck",
+      "icon": [
+        "icons/32x32.png",
+        "icons/128x128.png",
+        "icons/128x128@2x.png",
+        "icons/icon.icns",
+        "icons/icon.ico"
+      ]
+    },
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';"
+    },
+    "windows": [
+      {
+        "fullscreen": false,
+        "resizable": true,
+        "title": "LabGen Cyberdeck Terminal v2.4.1",
+        "width": 1600,
+        "height": 1000,
+        "minWidth": 1200,
+        "minHeight": 800,
+        "center": true,
+        "decorations": false,
+        "transparent": false,
+        "titleBarStyle": "Transparent",
+        "hiddenTitle": true,
+        "visibleOnAllWorkspaces": false
+      }
+    ]
+  }
+}

@@ -1,0 +1,73 @@
+{
+  "summary": {
+    "passed": false,
+    "failures": 2,
+    "warnings": 4,
+    "info": 1
+  },
+  "issues": [
+    {
+      "module": "text",
+      "severity": "medium",
+      "category": "word_count",
+      "message": "Introduction only 36 words (minimum 220)",
+      "location": {
+        "section": "Introduction"
+      }
+    },
+    {
+      "module": "text",
+      "severity": "medium",
+      "category": "word_count",
+      "message": "Discussion only 34 words (minimum 150)",
+      "location": {
+        "section": "Discussion"
+      }
+    },
+    {
+      "module": "text",
+      "severity": "medium",
+      "category": "word_count",
+      "message": "Conclusion only 25 words (minimum 150)",
+      "location": {
+        "section": "Conclusion"
+      }
+    },
+    {
+      "module": "data",
+      "severity": "high",
+      "category": "no_data_table",
+      "message": "No parsable data table found in report",
+      "location": {
+        "section": "Result"
+      }
+    },
+    {
+      "module": "structure",
+      "severity": "high",
+      "category": "missing_sections",
+      "message": "Missing required sections: data_table_latex",
+      "location": {
+        "sections": [
+          "data_table_latex"
+        ]
+      }
+    },
+    {
+      "module": "circuit",
+      "severity": "medium",
+      "category": "netlist_apparatus_mismatch",
+      "message": "Low overlap between netlist components and apparatus list (overlap=0%)",
+      "location": {
+        "section": "Circuit Design / Required Apparatus"
+      }
+    },
+    {
+      "module": "semantics",
+      "severity": "low",
+      "category": "llm_error",
+      "message": "LLM check failed: HTTPSConnectionPool(host='router.bynara.id', port=443): Read timed out. (read timeout=60)",
+      "location": {}
+    }
+  ]
+}

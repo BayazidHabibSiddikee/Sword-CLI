@@ -1,0 +1,332 @@
+<USER_REQUEST>
+fix everything and always do git push after every changes 
+
+  Full Bug & Problem Report for LabGen
+
+  🔴 CRITICAL BUGS (will cause crashes / silent failures)
+
+  1. LangGraph draft_report node doesn't receive circuit_json — data flows are broken
+
+  In graph.py, research and circuit both start from START in parallel, but draft_report only depends
+  on research. The circuit node writes to circuit_json but goes straight to END without feeding into
+  draft_report. So report_sections is generated without any circuit context, and circuit_json in the
+  final result comes only from the state—but the state merge behavior in LangGraph may clobber it. The
+  draft node never sees circuit data.
+
+  2. run_generation re-generates the netlist from scratch, ignoring graph_result's circuit_json
+
+  In main.py::run_generation, after calling run_pipeline(), the code extracts circuit_json =
+  graph_result.get("circuit_json", {}) but then immediately overwrites it by re-building
+  netlist_content from that same circuit_json—which may be empty {} if the graph's circuit node result
+  didn't merge properly. There is no fallback check: if circuit_json is {}, the resulting netlist is
+  just a header line with no components.
+
+  3. execute_dynamic_circuit function is defined but never called
+
+  main.py defines execute_dynamic_circuit() which does proper LLM circuit generation + schemdraw
+  execution, but run_generation duplicates all its logic inline instead of calling it. The function is
+  dead code.
+
+  4. _build_data_table_from_simulation uses wrong column indices
+
+  df = pd.read_csv(txt_out, sep=r'\s+', header=None)
+  if df.shape[1] >= 4:
+      v = pd.concat([df[0], df[2]])  # correct for 4-col ngspice wrdata
+  else:
+      v = df[0]
+      i = df[1]
+
+  But the wrdata output from ngspice writes index V I index V I ... format with alternating index
+  columns. The actual values are in columns [0,1,2,3] = [idx, V, idx, I]. So df[0] is actually the row
+  index and df[1] is V, df[2] is another index, df[3] is I. The column assignments are wrong—the table
+  will contain index numbers instead of voltages/currents.
+
+  5. API key is committed in plaintext in settings.json
+
+  settings.json contains "api_key": "sk-nry-TeauyPpk2F3OHFaHuZunwEJaj6j_cJbftoPCMITEc_4". This is a
+  live third-party API key hardcoded in a tracked file.
+
+  6. settings.json is not in .gitignore
+
+  The .gitignore likely doesn't exclude settings.json, meaning the exposed API key would be committed
+  to git history.
+
+  7. ngspice simulation loop overwrites dynamic.cir on every iteration
+
+  In run_generation, each resistor-value iteration writes to the same cir_path (always dynamic.cir).
+  The last write "wins." When ngspice runs asynchronously or there's a race, the CIR used by ngspice
+  may not match the intended iteration.
+
+  8. _build_data_table_from_simulation fallback path for _tran.txt is wrong
+
+  if not os.path.exists(txt_out) and os.path.exists(txt_out.replace('.txt', '_tran.txt')):
+      txt_out = txt_out.replace('.txt', '_tran.txt')
+
+  But by this point txt_out is iv_data.txt. The transient files were written as iv_data_0_tran.txt,
+  iv_data_1_tran.txt etc., not iv_data_tran.txt. So the fallback never matches and the function
+  returns an empty string—causing the "No parsable data table" verification failure seen in the actual
+  runs.
+
+  9. LaTeX regex substitutions in server.py::run_generation_with_progress are broken
+
+  body = re.sub(r"\section\*?\{([^}]+)\}", r"## \n", body)
+  body = re.sub(r"\textbf\{([^}]+)\}", r"****", body)
+  body = re.sub(r"\textit\{([^}]+)\}", r"**", body)
+
+  The capture group \1 is never used in the replacement strings—all section titles and bold/italic
+  text are dropped. The markdown preview in the UI will be completely empty headings and missing
+  formatted text.
+
+  10. verify_report API endpoint is a stub that always returns passed: true
+
+  @app.post("/api/verify")
+  async def verify_report(request: VerifyRequest):
+      return {"status": "verified", "summary": {"passed": True, "failures": 0, "warnings": 0}}
+
+  This never actually runs the verification pipeline. The REST verify endpoint is non-functional.
+
+  11. WebSocket API key auth is broken — passed as query param but api_key is not declared as Query()
+
+  @app.websocket("/ws")
+  async def websocket_endpoint(websocket: WebSocket, api_key: str = None):
+
+  FastAPI doesn't automatically parse WebSocket query parameters unless explicitly declared with
+  Query(). api_key will always be None, causing every WebSocket connection to be rejected with code
+  1008.
+
+  ────────────────────────────────────────────────────────────────────────────────────────────────────
+
+  🟠 MAJOR BUGS (wrong behavior, data loss, bad output)
+
+  12. run_generation runs get_hybrid_research_context twice
+
+  Once inside run_pipeline() (the LangGraph graph calls it) and again explicitly in run_generation
+   right before assembling LaTeX. This doubles LLM/web API calls and time.
+
+  13. sections.py::generate_section is a stub that returns None
+
+  The file exists and is imported nowhere, but sections.py::generate_section returns pass (implicitly
+  None). It was never implemented.
+
+  14. draw.py is dead code — draw_diode_circuit is defined but never called
+
+  The schematic drawing for diodes is completely unused; main.py has its own inline draw_triac_circuit
+   fallback.
+
+  15. simulate.py::parse_raw_file always returns None
+
+  def parse_raw_file(raw_file):
+      pass
+
+  This is a stub. Any code calling it gets None.
+
+  16. ingest.py::_guess_sections references re without importing it at module top
+
+  re is imported only at the bottom of ingest.py (used by extract_pdf via the import re inside
+  extract_pdf's scope—actually it's a top-level import missing). Actually import re from pipeline.ocr
+   is pulled in at the bottom but _guess_sections uses re.compile at definition time — if Python
+  imports the module in order, re won't be available when _guess_sections is defined. Checking: re is
+  never imported at the top of ingest.py. The import re at the bottom is too late. This will cause
+  NameError: name 're' is not defined when _guess_sections runs.
+
+  17. circuit_templates.py buck-boost template has a broken ngspice netlist
+
+  The fallback netlist:
+
+  "V1 1 0 DC 12",
+  "L1 2 0 100u",
+  "D1 3 2 D1N4148",
+  "C1 3 0 470u",
+  "Rload 3 0 10",
+  ".model D1N4148 D(...)"
+
+  V1 connects nodes 1→0 but L1 connects 2→0, with nothing connecting node 1 to node 2 (no switch/PWM
+  transistor). The circuit is open and ngspice will either error or produce trivial results. This is
+  the main "working" fallback circuit and it's wrong.
+
+  18. research.py uses escaped newlines \\n in f-strings instead of real \n
+
+  context_lines.append(f"[{i+1}] {title}\\nURL: {href}\\nSnippet: {body}\\n")
+  return "\\n".join(context_lines)
+
+  This outputs literal \n characters as two characters (\ + n) in the context string instead of real
+  newlines. The LLM receives garbled research context with no line breaks.
+
+  19. rag.py has hardcoded absolute paths
+
+  RAG_DIR = "/home/sword/Documents/LAB_Expert/labgen/rag_data"
+  INDEX_DIR = "/home/sword/Documents/LAB_Expert/labgen/rag_index"
+
+  This breaks on any other machine or if the project is moved. Should use Path(__file__).parent
+   relative paths.
+
+  20. cad.py::execute_and_validate appends duplicate import cadquery as cq inside generated script
+
+  The full_code appended to the script always adds import cadquery as cq again at the bottom, which is
+  redundant and can shadow variables if the LLM-generated script also imports it, but more critically
+  the export block runs even if result isn't a valid CQ object (the if 'result' in locals() check
+  passes but result could be anything).
+
+  21. verify.py::run_all_checks dispatches validators with a fragile chained if hasattr on the same
+  line
+
+  issues.extend(validator.check_text(report) if hasattr(validator, "check_text") else
+                validator.check_data(report) if hasattr(validator, "check_data") else ...)
+
+  If a validator has multiple check_* methods (which none currently do, but it's extremely fragile),
+  only the first matching method runs. Also, semantics uses check_semantics not
+  check_text/data/structure/circuit/references, so the chain falls through correctly—but this will
+  silently skip any new validator that doesn't follow the exact naming convention.
+
+  22. references.py::feature_vector makes live HTTP requests during feature extraction
+
+  feature_vector calls _check_url for every reference URL. This is called during classifier
+  training/prediction and adds several seconds of HTTP latency. During training on 200+ PDFs this
+  would be extremely slow.
+
+  23. The _tran.txt column mapping in the transient plot is wrong
+
+  In run_generation:
+
+  df_tran = pd.read_csv(loop_txt_out.replace('.txt', '_tran.txt'), sep=r'\s+', header=None)
+  tran_data.append((r_val, colors[r_idx % len(colors)], df_tran))
+  # Later:
+  plt.plot(df_tran[0] * 1000, df_tran[1], ...)
+
+  Again assuming df_tran[0] = time and df_tran[1] = voltage. But ngspice wrdata with two signals
+  outputs 4 columns: [idx, val1, idx, val2]. So time is df_tran[1] (col 1) and V(2) is df_tran[3]. The
+  transient plot X axis will be row indices × 1000, not time in ms.
+
+  ────────────────────────────────────────────────────────────────────────────────────────────────────
+
+  🟡 MEDIUM PROBLEMS (missing features, poor architecture)
+
+  24. graph.py: LangGraph circuit and draft nodes run independently — circuit design never informs
+  report drafting
+
+  circuit goes to END and draft goes to END separately. draft_report never sees circuit_json, so the
+  LLM generating the report sections has no idea what circuit was designed. The theory, discussion and
+  conclusion will be generic.
+
+  25. run_generation uses relative paths for model files that break when cwd isn't labgen/
+
+  model_path = os.path.abspath("models/triac.sub").replace('\\', '/')
+
+  os.path.abspath resolves relative to os.getcwd(). When the server calls main.py with cwd=labgen_dir,
+  this works, but when users run from the root LAB_Expert/ directory it resolves to
+  LAB_Expert/models/triac.sub which doesn't exist. Should use Path(__file__).parent /
+  "models/triac.sub".
+
+  26. server.py::run_generation_with_progress spawns python main.py as subprocess instead of calling
+  functions directly
+
+  This adds process spawn overhead, loses structured exceptions, and makes debugging much harder. The
+  server already imports run_labgen_generation from main.py but never uses it (it's imported but
+  unused).
+
+  27. settings.json uses "provider": "openai" but the README says "provider": "custom" and the URL is
+  a third-party proxy (router.bynara.id)
+
+  The README example uses Gemini but the actual settings use an OpenAI-compatible third-party router.
+  The call_llm function will work (it detects OpenAI-compatible) but the README is misleading.
+
+  28. requirements.txt is incomplete
+
+  Missing: tenacity, rank_bm25, pdf2image, pytesseract, pillow, faiss-cpu, jinja2, cadquery,
+  pdfplumber, PyMuPDF (fitz), duckduckgo-search. The requirements.txt only has 13 packages but the
+  code imports ~25 distinct libraries.
+
+  29. compile_pdf in assemble.py uses tectonic but the health check looks for pdflatex
+
+  # assemble.py
+  cmd = ["tectonic", "--outdir", output_dir, tex_file]
+
+  # server.py health check
+  "pdflatex": "ready" if shutil.which("pdflatex") else "missing"
+
+  These are inconsistent — the health check will always show pdflatex: missing even if tectonic is
+  installed.
+
+  30. LaTeX template uses tgtermes package but also has \rmfamily — font will not actually be Times
+  New Roman
+
+  tgtermes is only available with pdflatex. With tectonic, font handling may differ. If the user's
+  system doesn't have the tgtermes font, LaTeX compilation fails silently and the PDF may not be
+  generated.
+
+  31. LaTeX template injects theory_img, circuit_img, and plot paths as raw absolute paths without
+  escaping underscores or special chars
+
+  Paths like /home/sword/.../inverting_buck-boost_converter/figs/... contain underscores which are
+  special characters in LaTeX and will cause compilation errors unless escaped.
+
+  32. fluidsim.py generates a fake .ct XML file — FluidSIM won't open it
+
+  xml_content = f"<?xml version=\"1.0\"?>\n<FluidSimCircuit>\n  <!-- {reasoning}
+  -->\n</FluidSimCircuit>"
+
+  Real FluidSIM .ct files are proprietary binary/XML formats with specific schemas. This stub XML is
+  useless and misleading.
+
+  33. The LightGBM classifier was trained on synthetic data
+
+  models/verifier_classifier.txt is from synthetic_training/ (generated by
+  generate_synthetic_training.py). The synthetic model was not trained on real PDFs. Verification
+  predictions will be unreliable.
+
+  ────────────────────────────────────────────────────────────────────────────────────────────────────
+
+  🟢 MINOR ISSUES
+
+  34. patch_*.py and patch_*.js files are left in the root — development artifacts polluting the repo
+  There are 15+ patch files at the root level (patch.js, patch2.js, patch_server.py, etc.) that are
+  one-off fix scripts. They shouldn't be in the repo.
+
+  35. test_*.py / test_*.cir test files left in labgen/
+  test_plot.py, test_data.py, test_jinja.py, test_logic.py, test_ngspice.cir, test_empty.cir,
+  test_step.cir are scattered in labgen/. They should be in a tests/ directory or removed.
+
+  36. scraper_integration.py hardcodes a path to knowledge_hub.py that likely doesn't exist on other
+  machines
+
+  KNOWLEDGE_HUB_PATH = "/home/sword/Documents/projects/tools/knowledge_hub.py"
+
+  37. server.py imports run_labgen_generation from main.py but never uses it
+
+  The import is dead code.
+
+  38. mcp_server.py appears to be a stub — it's 1.4KB with no actual MCP implementation visible
+
+  ────────────────────────────────────────────────────────────────────────────────────────────────────
+
+  Summary by Category
+
+  ┌─────────────┬───────┬──────────────────────────────────────────────────────────────────────────┐
+  │ Severity    │ Count │ Key Areas                                                                │
+  ├─────────────┼───────┼──────────────────────────────────────────────────────────────────────────┤
+  │ 🔴 Critical │ 11    │ LangGraph data flow, ngspice column mapping, API key exposed, WebSocket  │
+  │             │       │ auth broken, verify stub                                                 │
+  ├─────────────┼───────┼──────────────────────────────────────────────────────────────────────────┤
+  │ 🟠 Major    │ 12    │ Research context escaping, hardcoded paths, broken fallback netlist,     │
+  │             │       │ stub functions                                                           │
+  ├─────────────┼───────┼──────────────────────────────────────────────────────────────────────────┤
+  │ 🟡 Medium   │ 10    │ Incomplete requirements, LaTeX path escaping, pdflatex vs tectonic       │
+  │             │       │ mismatch                                                                 │
+  ├─────────────┼───────┼──────────────────────────────────────────────────────────────────────────┤
+  │ 🟢 Minor    │ 5     │ Leftover patch files, test files, dead imports                           │
+  └─────────────┴───────┴──────────────────────────────────────────────────────────────────────────┘
+
+  The most impactful things to fix first, in order:
+
+  1. Remove the API key from settings.json (security)
+  2. Fix the ngspice wrdata column mapping (affects all simulation data and tables)
+  3. Fix LangGraph so draft_report receives circuit_json (affects report quality)
+  4. Fix _build_data_table_from_simulation transient file path (verification always fails)
+  5. Fix research.py escaped \\n newlines (corrupts all LLM context)
+  6. Fix WebSocket API key query parameter declaration (no WS connections work)
+  7. Fix the buck-boost fallback netlist (missing switch element)
+  8. Add missing packages to requirements.txt
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-10-10T23:57:25+06:00.
+</ADDITIONAL_METADATA>

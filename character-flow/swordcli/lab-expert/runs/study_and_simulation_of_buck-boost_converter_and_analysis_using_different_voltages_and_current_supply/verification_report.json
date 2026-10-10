@@ -1,0 +1,62 @@
+{
+  "summary": {
+    "passed": true,
+    "failures": 0,
+    "warnings": 4,
+    "info": 2
+  },
+  "issues": [
+    {
+      "module": "text",
+      "severity": "medium",
+      "category": "word_count",
+      "message": "Introduction only 69 words (minimum 220)",
+      "location": {
+        "section": "Introduction"
+      }
+    },
+    {
+      "module": "text",
+      "severity": "medium",
+      "category": "word_count",
+      "message": "Discussion only 41 words (minimum 150)",
+      "location": {
+        "section": "Discussion"
+      }
+    },
+    {
+      "module": "text",
+      "severity": "medium",
+      "category": "word_count",
+      "message": "Conclusion only 37 words (minimum 150)",
+      "location": {
+        "section": "Conclusion"
+      }
+    },
+    {
+      "module": "data",
+      "severity": "low",
+      "category": "data_ok",
+      "message": "All 10 data points match simulation within 20%",
+      "location": {
+        "section": "Result"
+      }
+    },
+    {
+      "module": "circuit",
+      "severity": "medium",
+      "category": "netlist_apparatus_mismatch",
+      "message": "Low overlap between netlist components and apparatus list (overlap=0%)",
+      "location": {
+        "section": "Circuit Design / Required Apparatus"
+      }
+    },
+    {
+      "module": "semantics",
+      "severity": "low",
+      "category": "llm_error",
+      "message": "LLM check failed: HTTPSConnectionPool(host='router.bynara.id', port=443): Read timed out. (read timeout=15)",
+      "location": {}
+    }
+  ]
+}

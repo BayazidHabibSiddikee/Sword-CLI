@@ -1,0 +1,223 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 3%;
+    --foreground: 0 0% 98%;
+  }
+
+  .dark {
+    --background: 0 0% 3%;
+    --foreground: 0 0% 98%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-zinc-700;
+  }
+
+  html {
+    @apply scroll-smooth;
+  }
+
+  body {
+    @apply bg-zinc-950 text-zinc-100 font-sans antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  /* Global focus indicators for accessibility */
+  *:focus-visible {
+    @apply outline-none ring-2 ring-zinc-100 ring-offset-2 ring-offset-zinc-950;
+  }
+
+  /* Selection styling */
+  ::selection {
+    @apply bg-zinc-100/30 text-white;
+  }
+
+  /* Scrollbar styling */
+  ::-webkit-scrollbar {
+    @apply w-2 h-2;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-zinc-900;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-zinc-700 rounded hover:bg-zinc-600;
+  }
+  ::-webkit-scrollbar-corner {
+    @apply bg-zinc-900;
+  }
+
+  /* Reduced motion support */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer components {
+  /* Form input base */
+  .input-base {
+    @apply w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white placeholder-zinc-500;
+    @apply focus:outline-none focus:ring-2 focus:ring-zinc-100/30 focus:border-transparent;
+    @apply transition-colors duration-150;
+  }
+
+  .input-error {
+    @apply border-red-500/50 focus:ring-red-500/50;
+  }
+
+  /* Button variants */
+  .btn-primary {
+    @apply px-4 py-2.5 bg-zinc-100 hover:bg-zinc-200 text-zinc-900 font-medium rounded-lg;
+    @apply focus:outline-none focus:ring-2 focus:ring-zinc-100/30 focus:ring-offset-2 focus:ring-offset-zinc-950;
+    @apply transition-all duration-150 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply shadow-lg shadow-sm;
+  }
+
+  .btn-secondary {
+    @apply px-4 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-white font-medium rounded-lg border border-zinc-700;
+    @apply focus:outline-none focus:ring-2 focus:ring-zinc-500/50 focus:ring-offset-2 focus:ring-offset-zinc-950;
+    @apply transition-all duration-150 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-ghost {
+    @apply px-3 py-1.5 text-zinc-400 hover:text-white hover:bg-zinc-800/50 rounded-lg;
+    @apply focus:outline-none focus:ring-2 focus:ring-zinc-500/50;
+    @apply transition-all duration-150;
+  }
+
+  .btn-danger {
+    @apply px-4 py-2.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 font-medium rounded-lg border border-red-500/30;
+    @apply focus:outline-none focus:ring-2 focus:ring-red-500/50 focus:ring-offset-2 focus:ring-offset-zinc-950;
+    @apply transition-all duration-150 active:scale-[0.98];
+  }
+
+  .btn-success {
+    @apply px-4 py-2.5 bg-green-500/20 hover:bg-green-500/30 text-green-400 font-medium rounded-lg border border-green-500/30;
+    @apply focus:outline-none focus:ring-2 focus:ring-green-500/50 focus:ring-offset-2 focus:ring-offset-zinc-950;
+    @apply transition-all duration-150 active:scale-[0.98];
+  }
+
+  /* Panel/Card base */
+  .panel {
+    @apply bg-zinc-900/50 border border-zinc-700 rounded-lg;
+    @apply backdrop-blur-sm;
+  }
+
+  .panel-elevated {
+    @apply bg-zinc-900 border border-zinc-700 rounded-xl shadow-xl;
+    @apply shadow-zinc-950/50;
+  }
+
+  /* Accordion */
+  .accordion-header {
+    @apply w-full px-4 py-3 flex items-center justify-between hover:bg-zinc-800/50 transition-colors;
+  }
+
+  .accordion-content {
+    @apply px-4 pb-4 border-t border-zinc-700/50 animate-in slide-in-from-top-2 duration-200;
+  }
+
+  /* Tab */
+  .tab {
+    @apply px-3 py-1.5 rounded-t-lg text-sm font-medium transition-all duration-150 flex items-center gap-1.5;
+  }
+
+  .tab-active {
+    @apply bg-zinc-800 text-white border-b-2 border-zinc-100;
+  }
+
+  .tab-inactive {
+    @apply text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50;
+  }
+
+  /* Terminal */
+  .terminal-content {
+    @apply font-mono text-xs leading-relaxed;
+    font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  }
+
+  /* Code block */
+  .code-block {
+    @apply bg-zinc-950 p-4 rounded-lg overflow-auto text-sm font-mono text-zinc-100;
+  }
+
+  /* Asset card */
+  .asset-card {
+    @apply p-3 bg-zinc-800/50 border border-zinc-700 rounded-lg;
+    @apply hover:border-zinc-100/30 hover:bg-zinc-800 transition-all;
+  }
+
+  /* Stage indicator */
+  .stage-indicator {
+    @apply w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300;
+  }
+
+  .stage-pending {
+    @apply bg-zinc-700 text-zinc-500 border border-zinc-600;
+  }
+
+  .stage-running {
+    @apply bg-zinc-800/50 text-zinc-300 border border-zinc-100/30 animate-pulse;
+  }
+
+  .stage-complete {
+    @apply bg-green-500/20 text-green-400 border border-green-500/50;
+  }
+
+  .stage-error {
+    @apply bg-red-500/20 text-red-400 border border-red-500/50;
+  }
+}
+
+@layer utilities {
+  /* Text gradient */
+  .text-gradient {
+    @apply bg-gradient-to-r from-blue-400 via-purple-400 to-green-400 bg-clip-text text-transparent;
+  }
+
+  /* Glass morphism (subtle) */
+  .glass {
+    @apply bg-zinc-900/80 backdrop-blur-lg border border-zinc-700/50;
+  }
+
+  /* High contrast text */
+  .text-high-contrast {
+    @apply text-zinc-50;
+  }
+
+  .text-muted {
+    @apply text-zinc-400;
+  }
+
+  .text-dim {
+    @apply text-zinc-500;
+  }
+
+  /* Animation delays */
+  .animate-delay-100 { animation-delay: 100ms; }
+  .animate-delay-200 { animation-delay: 200ms; }
+  .animate-delay-300 { animation-delay: 300ms; }
+  .animate-delay-500 { animation-delay: 500ms; }
+  .animate-delay-1000 { animation-delay: 1000ms; }
+
+  /* Hide scrollbar but keep scroll functionality */
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+}

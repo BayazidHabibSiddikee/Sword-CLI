@@ -337,9 +337,9 @@ async function main() {
 
       if (input === '/lab') {
         console.log(c.magenta ? c.magenta('Booting LAB_Expert workspace...') : c.cyan('Booting LAB_Expert workspace...'));
-        const labRun = '/home/sword/Documents/LAB_Expert/run.sh';
+        const labRun = '/home/sword/Documents/Characters/character-flow/swordcli/lab-expert/run.sh';
         const p = spawn('bash', [labRun], {
-          cwd: '/home/sword/Documents/LAB_Expert',
+          cwd: '/home/sword/Documents/Characters/character-flow/swordcli/lab-expert',
           stdio: 'ignore',
           detached: true
         });

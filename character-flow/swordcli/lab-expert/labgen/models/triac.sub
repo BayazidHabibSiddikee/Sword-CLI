@@ -1,0 +1,30 @@
+* Generic TRIAC Model
+.SUBCKT TRIAC 1 2 3
+* 1=MT2, 2=MT1, 3=Gate
+* Simplified model using two SCRs back-to-back
+* Actually, it's easier to use a standard thyristor latch approach.
+* For V-I characteristics, we can just use a non-linear resistor or a behavioral source 
+* if we just want a quick simulation to show the shape.
+* Let's use a simple behavioral approach for the Triac V-I curve:
+* It blocks until voltage > VBO or gate current is applied.
+* Let's use two ideal switches controlled by voltage and gate.
+* A better way is using standard components:
+
+* PNP and NPN for positive half-cycle (SCR1)
+Q1 4 5 1 Pmod
+Q2 5 4 2 Nmod
+* PNP and NPN for negative half-cycle (SCR2)
+Q3 6 7 2 Pmod
+Q4 7 6 1 Nmod
+
+* Gate connections (simplified)
+R1 3 4 50
+R2 3 7 50
+
+* Holding current resistors
+R3 5 2 1k
+R4 6 1 1k
+
+.model Pmod PNP(Is=1e-14 Bf=10)
+.model Nmod NPN(Is=1e-14 Bf=10)
+.ENDS TRIAC

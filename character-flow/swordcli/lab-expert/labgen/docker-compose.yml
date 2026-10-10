@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  labgen:
+    build:
+      context: .
+      dockerfile: labgen/Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./labgen/runs:/app/labgen/runs
+      - ./labgen/rag_data:/app/labgen/rag_data
+      - ./labgen/rag_index:/app/labgen/rag_index
+      - ./labgen/models:/app/labgen/models
+      - ./labgen/settings.json:/app/labgen/settings.json
+      - ./labgen/store:/app/labgen/store
+      - ./Documents:/app/Documents
+    environment:
+      - PYTHONUNBUFFERED=1
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Optional: Redis for distributed crawling (if using web-scraper)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+volumes:
+  redis_data:

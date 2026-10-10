@@ -1,0 +1,21 @@
+Dynamic Circuit: Study and simulation of buck-boost converter and analysis using different voltages and current supply
+
+* Circuit
+V1 1 0 DC 12
+Rin 1 2 10k
+L1 2 0 100u
+D1 3 2 D1N4148
+C1 3 0 470u
+Rload 3 0 10
+.model D1N4148 D(Is=2.52n Rs=0.568 N=1.752 Cjo=4p M=0.333 tt=5.76n)
+
+* Analysis
+.dc V1 -15 15 0.1
+
+.control
+    run
+    let V_target = V(2)
+    let I_target = -I(V1)
+    wrdata runs/study_and_simulation_of_buck-boost_converter_and_analysis_using_different_voltages_and_current_supply/iv_data_2.txt V_target I_target
+.endc
+.end

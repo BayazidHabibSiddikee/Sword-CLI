@@ -1,0 +1,11 @@
+Dynamic Circuit: Test Experiment\n* Circuit\nV1 1 0 DC 12\nR1 1 2 1k\n.end\n
+* Analysis
+.dc V1 -15 15 0.1
+
+.control
+    run
+    let V_target = V(2)
+    let I_target = -I(V1)
+    wrdata runs/test_experiment/iv_data.txt V_target I_target
+.endc
+.end
