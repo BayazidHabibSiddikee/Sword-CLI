@@ -1,14 +1,14 @@
 import { createRequire } from 'node:module';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 // Local API databases that may hold the CLI's credential. Every candidate is
 // inside this repository (the swordcli API background and the plain-node
 // sword-server), so a fresh clone never depends on an external project.
 const FREEAPI_DBS = [
-  '/home/sword/Documents/Characters/character-flow/swordcli/server/data/freeapi.db',
+  '../swordcli/server/data/freeapi.db',
 ];
-const SWORD_SERVER_DB = '/home/sword/Documents/Characters/character-flow/sword-server/data/sword.db';
+const SWORD_SERVER_DB = '../sword-server/data/sword.db';
 
 /** sword-server (:3101) keeps its token under `api_token`; freeapi backends (:3001) under `unified_api_key`. */
 function dbCandidates(baseHref) {
@@ -20,7 +20,7 @@ function dbCandidates(baseHref) {
 }
 
 function readKeyFromDb({ rel, key }) {
-  const dbUrl = new URL(rel, import.meta.url);
+  const dbUrl = new URL(rel, 'file://' + realpathSync(fileURLToPath(import.meta.url)));
   if (!existsSync(fileURLToPath(dbUrl))) return null;
   let db;
   try {
