@@ -6,9 +6,9 @@ import { fileURLToPath } from 'node:url';
 // inside this repository (the swordcli API background and the plain-node
 // sword-server), so a fresh clone never depends on an external project.
 const FREEAPI_DBS = [
-  '../swordcli/server/data/freeapi.db',
+  '/home/sword/Documents/Characters/character-flow/swordcli/server/data/freeapi.db',
 ];
-const SWORD_SERVER_DB = '../sword-server/data/sword.db';
+const SWORD_SERVER_DB = '/home/sword/Documents/Characters/character-flow/sword-server/data/sword.db';
 
 /** sword-server (:3101) keeps its token under `api_token`; freeapi backends (:3001) under `unified_api_key`. */
 function dbCandidates(baseHref) {

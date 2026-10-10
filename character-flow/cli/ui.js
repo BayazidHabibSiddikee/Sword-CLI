@@ -80,7 +80,6 @@ export function statusLine(opts) {
   } else {
     lines.push(`  ${chalk.dim('session:')}   (local | ephemeral)`);
   }
-  lines.push(`  ${chalk.dim('contact:')}   bayazid@med.com.bd`);
   lines.push(`  ${chalk.dim('history:')}   ${historyCount} message(s)`);
   lines.push(`  ${chalk.dim('approvals:')} ${approval}`);
   lines.push('');
@@ -197,7 +196,6 @@ export function banner(opts) {
   } else {
     lines.push(`  ${chalk.dim('session:')} (local | ephemeral)`);
   }
-  lines.push(`  ${chalk.dim('contact:')} bayazid@med.com.bd`);
   lines.push('');
   return lines.join('\n');
 }
