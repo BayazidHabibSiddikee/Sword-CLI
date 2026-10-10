@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-WEB_SCRAPER_PATH = "/home/sword/Documents/web-scraper"
+WEB_SCRAPER_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "..", "web-scraper")
 
 def _run_markitdown(pdf_path: str) -> Optional[str]:
     script = os.path.join(WEB_SCRAPER_PATH, "examples", "content_extract", "markitdown_convert.py")

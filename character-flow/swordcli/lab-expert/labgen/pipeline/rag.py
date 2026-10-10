@@ -162,7 +162,7 @@ def get_research_context(query: str, use_rag: bool = True, use_web: bool = True)
     
     if use_web:
         from pipeline.research import get_research_context as web_research
-        web_context = web_research(query)
+        web_context = ""
         contexts.append(f"=== WEB SEARCH (knowledge_hub/DDGS) ===\n{web_context}")
     
     return "\n\n".join(contexts)

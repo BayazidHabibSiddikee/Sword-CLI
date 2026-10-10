@@ -37,9 +37,9 @@ def _load_iv_data(path: str) -> Optional[pd.DataFrame]:
     try:
         df = pd.read_csv(path, sep=r"\s+", header=None)
         if df.shape[1] >= 4:
-            df.columns = ["V1", "I1", "V2", "I2"]
-            v = pd.concat([df["V1"], df["V2"]]).reset_index(drop=True)
-            i = pd.concat([df["I1"], df["I2"]]).reset_index(drop=True)
+            df.columns = ["Idx1", "V1", "Idx2", "I1"]
+            v = df["V1"].reset_index(drop=True)
+            i = df["I1"].reset_index(drop=True)
             return pd.DataFrame({"V": v, "I": i}).sort_values("V").reset_index(drop=True)
         elif df.shape[1] == 2:
             df.columns = ["V", "I"]
